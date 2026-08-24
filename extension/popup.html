@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  :root{
+    --bg:#171922; --raised:#1E212C; --border:#282D3A;
+    --text:#ECEAE4; --text-muted:#7B8091; --sense:#4FD8C4; --sense-dim:#1F4A45;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; width:260px; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    padding:12px;
+  }
+  .title{
+    font-size:12px; font-weight:600; color:var(--text-muted);
+    letter-spacing:0.02em; margin-bottom:10px; padding:0 2px;
+  }
+  button{
+    width:100%; text-align:left; background:var(--raised); color:var(--text);
+    border:1px solid var(--border); border-radius:7px; padding:10px 12px;
+    font-size:13px; font-family:inherit; cursor:pointer; margin-bottom:8px;
+    display:flex; align-items:center; gap:10px;
+  }
+  button:last-of-type{margin-bottom:0;}
+  button:hover{border-color:var(--sense-dim); background:#20242F;}
+  button .ic{
+    width:20px; height:20px; border-radius:5px; background:rgba(79,216,196,0.1);
+    color:var(--sense); display:flex; align-items:center; justify-content:center;
+    font-size:12px; flex-shrink:0;
+  }
+  button .label{display:flex; flex-direction:column; gap:1px;}
+  button .label .k{font-size:9.5px; color:var(--text-muted); font-family:monospace;}
+  #status{
+    font-size:10.5px; color:var(--text-muted); font-family:monospace;
+    text-align:center; margin-top:10px; min-height:14px;
+  }
+  #status.ok{color:var(--sense);}
+  #status.err{color:#E5484D;}
+</style>
+</head>
+<body>
+  <div class="title">AgentEyes</div>
+  <button id="send-page">
+    <span class="ic">&#8595;</span>
+    <span class="label">Send this page<span class="k">Cmd+Shift+L</span></span>
+  </button>
+  <button id="pick-element">
+    <span class="ic">&#9678;</span>
+    <span class="label">Pick an element…<span class="k">Cmd+Shift+K</span></span>
+  </button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

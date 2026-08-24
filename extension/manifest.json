@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "AgentEyes",
+  "version": "0.1.0",
+  "description": "Sends the current page (or your selection) to a local agent bridge running on your laptop — click the icon or hit the shortcut.",
+  "permissions": ["activeTab", "scripting", "contextMenus"],
+  "host_permissions": ["http://localhost:8765/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "AgentEyes",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "send-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Send current page or selection to the local agent bridge"
+    },
+    "pick-element": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Highlight and click a specific element to send just that"
+    }
+  }
+}

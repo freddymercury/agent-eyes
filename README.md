@@ -1,0 +1,83 @@
+# AgentEyes
+
+Sends whatever page you're looking at (or just your text selection) straight to a local agent, no copy-paste.
+
+## 1. Start the server
+
+```
+cd server
+node server.js
+```
+
+No install step — it only uses Node's built-in `http` module. Leave this running in a terminal tab.
+
+## 2. Load the extension
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked**, select the `extension/` folder
+4. Pin it to the toolbar if you want it visible
+
+## 3. Use it
+
+Four ways in, all doing the same two things — send the page, or pick an element:
+
+- **Click the extension icon** — opens a small popup with two buttons: *Send this page* and *Pick an element…*
+- **Right-click anywhere on a page** — same two options in the context menu, right where your cursor already is
+- **Cmd+Shift+L** (Mac) / **Ctrl+Shift+L** (Win/Linux) — sends the whole page straight away, or just your selection if you've highlighted text
+- **Cmd+Shift+K** (Mac) / **Ctrl+Shift+K** (Win/Linux) — jumps straight into picker mode
+
+**Picker mode** (from any entry point): hover to highlight whatever's under your cursor — a label shows its tag/id/class — click to send just that element. **Esc** cancels without sending anything.
+
+The icon flashes a teal check on success, red `!` if it failed (usually means the server isn't running).
+
+## 4. Reading it from your agent
+
+Whatever you build next can pull the latest page in either form:
+
+- **File on disk** — always the latest capture:
+  - `~/.agenteyes/context.json` (structured: title, url, text, capturedAt)
+  - `~/.agenteyes/context.md` (markdown, good for just `cat`-ing into a prompt)
+- **HTTP** — `GET http://localhost:8765/context` returns the same JSON
+- **History** — every capture is also kept at `~/.agenteyes/captures/`,
+  one file per send, named `<timestamp>_<domain>_<page|element>.md`, so
+  sending a new page never erases the last one. Nothing reads from here
+  automatically — it's there if you want to grep or `ls` back through what
+  you've sent.
+
+Example, from a shell-based agent or script:
+
+```bash
+cat ~/.agenteyes/context.md
+```
+
+Example, from anything that can do HTTP:
+
+```bash
+curl http://localhost:8765/context
+```
+
+### Telling the agent about this tool
+
+`AGENTS.md` in this project root explains the bridge to the agent itself —
+what the files mean, how to tell if a capture is fresh, how to interpret
+`elementPicked`. Many CLI agents (Codex, others) read `AGENTS.md`
+automatically if it's in the project. For **Claude Code** specifically, copy
+or symlink it to `CLAUDE.md`:
+
+```bash
+cp AGENTS.md CLAUDE.md
+```
+
+Without this, the agent has no framing for the file — it'll just see raw
+text with no idea it's a live capture from your browser.
+
+## Notes / known rough edges
+
+- This is on-demand only — nothing is sent until you click or hit a shortcut. No background polling, no continuous sync.
+- One page (or element) at a time — sending a new capture overwrites
+  `context.md` / `context.json`. Every capture is also kept, one file per
+  send, in `~/.agenteyes/captures/` if you want to look something up
+  later — nothing reads from there automatically.
+- Text and structure, no vision — the element picker gives you the target's `outerHTML` alongside its flattened text, but nothing is screenshotted. Good enough for "let the agent read the specific thing I'm pointing at" without pulling in the bigger sensing/tool-building design.
+- Runs only on `localhost:8765` — nothing leaves your machine.
