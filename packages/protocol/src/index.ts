@@ -83,20 +83,29 @@ export interface ActionEvidence {
 }
 
 export interface DomExposure {
-  /** Structural path. NOT a stable identity — that is F3. */
+  /** Structural path. Diagnostic only — never used for identity. */
   domPath: string;
+  /** Chain of ancestor roles; survives wrapper elements being introduced. */
+  roleAncestorPath?: string;
   tagName: string;
   role?: string;
   accessibleName?: string;
 }
 
+/**
+ * How an action's id was derived, in descending order of durability.
+ *
+ * `positional` ids are expected to churn across releases and should be treated
+ * as unreliable for comparison — surfacing this is the point.
+ */
+export type IdentityStrategy = "testid" | "semantic" | "positional";
+
 export interface Action {
-  /**
-   * Positional and NOT stable across releases. F2 deliberately ships unstable
-   * ids so that discovery can be judged before identity is solved; nothing
-   * compares two captures yet.
-   */
+  /** Hash of `identityKey`. Stability depends on `identityStrategy`. */
   id: string;
+  identityStrategy: IdentityStrategy;
+  /** The human-readable input the id was hashed from, for debugging churn. */
+  identityKey: string;
   label: string;
   kind: ActionKind;
   evidence: ActionEvidence;

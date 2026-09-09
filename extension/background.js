@@ -166,6 +166,74 @@ function scanSurface(maxNodes) {
     file: "input"
   };
 
+  // ---- identity -----------------------------------------------------------
+  //
+  // An id has to survive a release, so it is built from semantics, never from
+  // CSS classes. Filtering "generated" classes would mean a new heuristic per
+  // styling framework (Tailwind utilities, CSS-modules hashes,
+  // styled-components) and being wrong is silent — so classes are simply never
+  // consulted.
+
+  const IMPLICIT_ROLE = {
+    BUTTON: "button", A: "link", INPUT: "textbox", SELECT: "combobox",
+    TEXTAREA: "textbox", SUMMARY: "button", OPTION: "option", FORM: "form",
+    NAV: "navigation", MAIN: "main", HEADER: "banner", FOOTER: "contentinfo",
+    ASIDE: "complementary", SECTION: "region", ARTICLE: "article",
+    UL: "list", OL: "list", LI: "listitem", TABLE: "table", DIALOG: "dialog"
+  };
+
+  function roleOf(el) {
+    const explicit = (el.getAttribute("role") || "").toLowerCase();
+    if (explicit) return explicit;
+    if (el.tagName === "INPUT") {
+      const t = (el.getAttribute("type") || "text").toLowerCase();
+      if (t === "submit" || t === "button" || t === "reset") return "button";
+      if (t === "checkbox") return "checkbox";
+      if (t === "radio") return "radio";
+      return "textbox";
+    }
+    return IMPLICIT_ROLE[el.tagName] || "";
+  }
+
+  // Counts and dates churn constantly without the capability changing, so
+  // "Cart (3)" and "Cart (4)" must normalize to the same name.
+  function normalizeLabel(text) {
+    return (text || "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/\d+/g, "#")
+      .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
+      .replace(/[^a-z0-9#'\- ]/g, "")
+      .trim()
+      .slice(0, 60);
+  }
+
+  /** Chain of meaningful ancestor roles — survives wrapper divs being added. */
+  function roleAncestorPath(el) {
+    const parts = [];
+    let n = el.parentElement;
+    while (n && parts.length < 5) {
+      const r = roleOf(n);
+      if (r && r !== "listitem") parts.unshift(r);
+      n = n.parentElement;
+    }
+    return parts.join(">");
+  }
+
+  function testIdOf(el) {
+    for (const a of ["data-testid", "data-test-id", "data-test", "data-cy", "data-qa"]) {
+      const v = el.getAttribute(a);
+      if (v && v.trim()) return v.trim();
+    }
+    return null;
+  }
+
+  function shortHash(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
   function domPath(el) {
     const parts = [];
     let n = el;
@@ -300,6 +368,9 @@ function scanSurface(maxNodes) {
 
   const actions = [];
   const queue = [document.body];
+  // Disambiguates several controls that are genuinely identical in semantics
+  // ("Edit" three times in the same list).
+  const ordinals = new Map();
 
   while (queue.length) {
     const node = queue.shift();
@@ -320,8 +391,33 @@ function scanSurface(maxNodes) {
     if (node.nodeType === 1 && node !== document.body && visible(node)) {
       const c = classify(node);
       if (c) {
+        const testId = testIdOf(node);
+        const role = roleOf(node);
+        const name = normalizeLabel(accessibleName(node));
+        const path = roleAncestorPath(node);
+
+        let identityStrategy;
+        let identityKey;
+        if (testId) {
+          identityStrategy = "testid";
+          identityKey = "testid:" + testId;
+        } else if (name || role) {
+          identityStrategy = name ? "semantic" : "positional";
+          identityKey = [role, name, path].join("|");
+        } else {
+          // Nothing semantic to hold on to; the id will churn and says so.
+          identityStrategy = "positional";
+          identityKey = domPath(node);
+        }
+
+        const seen = (ordinals.get(identityKey) || 0);
+        ordinals.set(identityKey, seen + 1);
+        const withOrdinal = seen === 0 ? identityKey : identityKey + "#" + seen;
+
         actions.push({
-          id: "a" + actions.length,
+          id: shortHash(withOrdinal),
+          identityStrategy,
+          identityKey: withOrdinal,
           label: accessibleName(node) || node.tagName.toLowerCase(),
           kind: c.kind,
           evidence: c.evidence,
@@ -329,6 +425,7 @@ function scanSurface(maxNodes) {
           confidence: c.confidence,
           domExposure: {
             domPath: domPath(node),
+            roleAncestorPath: path,
             tagName: node.tagName.toLowerCase(),
             role: c.role || undefined,
             accessibleName: accessibleName(node) || undefined

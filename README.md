@@ -135,9 +135,43 @@ silently trusted.
 Same-origin iframes are skipped and counted rather than silently omitted. Scans
 stop after 20,000 nodes and report `truncated: true` instead of hanging the tab.
 
-Action ids are **positional and not stable** across loads. That is deliberate:
-nothing compares two scans yet, and stable identity is a harder problem worth
-solving on its own.
+### Action identity
+
+Each action carries an id derived from semantics, never from CSS classes.
+Filtering "generated" classes would need a new heuristic per styling framework
+(Tailwind utilities, CSS-modules hashes, styled-components), and being wrong is
+silent — so classes are simply never consulted.
+
+| strategy | derived from | durability |
+|---|---|---|
+| `testid` | `data-testid` and friends | survives even a label change |
+| `semantic` | role, normalized name, ancestor role path, ordinal | survives restyling and re-wrapping |
+| `positional` | DOM path | **expected to churn** — reported so it can be discounted |
+
+Labels are normalized before hashing, so `Cart (3)` and `Cart (12)` are the same
+action. Duplicate controls ("Edit" once per row) are disambiguated by ordinal
+within their ancestor path.
+
+Changes that *should* alter identity still do: renaming a control, or moving it
+into a different landmark, both produce a new id — those are real capability
+changes and hiding them would defeat the purpose.
+
+### Measuring churn
+
+```bash
+bun run scripts/make-corpus.ts corpus   # fixtures, for a smoke test
+bun run churn --corpus corpus           # exits non-zero above a 5% budget
+bun run churn before.json after.json    # a single pair
+```
+
+The metric is **false churn**: actions that are clearly the same capability yet
+got a different id. Raw "ids changed" is not useful, because a release genuinely
+adds and removes things.
+
+Fixtures currently report 0%. That is a smoke test, not evidence — **fixtures are
+the easy case and will flatter the identity function.** A real corpus means
+scans captured from an actual application across actual releases, which is the
+only thing that can tell a good identity function from a bad one.
 
 ### Resources
 

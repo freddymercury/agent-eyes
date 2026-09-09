@@ -2,11 +2,15 @@
   "name": "agent-eyes",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "bridge"],
+  "workspaces": [
+    "packages/*",
+    "bridge"
+  ],
   "scripts": {
     "bridge": "bun run bridge/src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "churn": "bun run scripts/churn.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
