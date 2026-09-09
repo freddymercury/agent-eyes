@@ -10,7 +10,8 @@
     "bridge": "bun run bridge/src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "churn": "bun run scripts/churn.ts"
+    "churn": "bun run scripts/churn.ts",
+    "analyze": "bun run scripts/analyze.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
