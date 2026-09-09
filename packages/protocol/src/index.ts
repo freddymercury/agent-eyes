@@ -270,3 +270,5 @@ export const URI_WATCH_LIST = "agenteyes://watch";
 export const watchUri = (id: string) => `agenteyes://watch/${id}`;
 export const parseWatchUri = (uri: string): string | null =>
   /^agenteyes:\/\/watch\/(.+)$/.exec(uri)?.[1] ?? null;
+
+export * from "./diff";

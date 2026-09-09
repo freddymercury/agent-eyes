@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "churn": "bun run scripts/churn.ts",
-    "analyze": "bun run scripts/analyze.ts"
+    "analyze": "bun run scripts/analyze.ts",
+    "diff": "bun run scripts/diff.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   DEFAULT_BRIDGE_CONFIG,
   comparabilityWarnings,
+  diffSurfaces,
   snapshotUri,
   URI_ACTIONS,
   URI_SNAPSHOTS,
@@ -363,6 +364,35 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
       if (!x || !y) return json({ error: `no snapshot ${!x ? a : b}` });
       const warnings = comparabilityWarnings(x.meta, y.meta);
       return json({ comparable: warnings.length === 0, warnings });
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_diff_snapshots",
+    {
+      title: "Diff two snapshots",
+      description:
+        "Compare two saved snapshots and report what was added, removed, renamed or " +
+        "changed, most prominent first. Always returns a diff: when the snapshots are " +
+        "poorly comparable it reports warnings alongside rather than refusing, since " +
+        "that is exactly when a diff is most wanted. Read the warnings before the counts.",
+      inputSchema: {
+        before: z.string().describe("Snapshot id, from list_snapshots"),
+        after: z.string().describe("Snapshot id, from list_snapshots"),
+        limit: z.number().optional().describe("Return only the first N changes"),
+      },
+    },
+    async ({ before, after, limit }: { before: string; after: string; limit?: number }) => {
+      const [a, b] = await Promise.all([readSnapshot(before), readSnapshot(after)]);
+      if (!a || !b) return json({ error: `no snapshot ${!a ? before : after}` });
+      const d = diffSurfaces(a.meta, a.snapshot.actions, b.meta, b.snapshot.actions);
+      return json({
+        before: { name: a.meta.name, createdAt: a.meta.createdAt },
+        after: { name: b.meta.name, createdAt: b.meta.createdAt },
+        warnings: d.warnings,
+        counts: d.counts,
+        changes: limit && limit > 0 ? d.changes.slice(0, limit) : d.changes,
+      });
     },
   );
 
