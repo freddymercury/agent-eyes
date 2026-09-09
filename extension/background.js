@@ -896,15 +896,14 @@ function installWatchKit(bridgeUrl, intervalMs) {
 
     tombstone(w) {
       try {
-        fetch(registry.bridgeUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        chrome.runtime.sendMessage({
+          type: "agenteyes-watch-report",
+          payload: {
             watchId: w.id,
             label: w.label,
             removed: true,
             capturedAt: new Date().toISOString()
-          })
+          }
         });
       } catch (err) {
         /* removal is best-effort; the watcher is already stopped */
@@ -978,10 +977,13 @@ function installWatchKit(bridgeUrl, intervalMs) {
     async report(w, text, alive, hashes) {
       w.revision++;
       try {
-        const res = await fetch(registry.bridgeUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+        // Sent via the background worker rather than fetched from here. This
+        // code runs in the page's context, so a direct fetch carries the
+        // page's origin, which the server refuses — and loosening the server
+        // to accept it would re-open reading captures from any site.
+        const ok = await chrome.runtime.sendMessage({
+          type: "agenteyes-watch-report",
+          payload: {
             title: document.title,
             url: location.href,
             autoWatch: true,
@@ -998,9 +1000,9 @@ function installWatchKit(bridgeUrl, intervalMs) {
             hashes: hashes || {},
             text: text.slice(0, 200000),
             capturedAt: new Date().toISOString()
-          })
+          }
         });
-        res.ok ? w.sent++ : w.failed++;
+        ok && ok.ok ? w.sent++ : w.failed++;
       } catch (err) {
         w.failed++;
       }
@@ -1251,6 +1253,11 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "agenteyes-watch-report") {
+    postToBridge(message.data || message.payload).then((r) => sendResponse(r));
+    return true;
+  }
+
   if (message?.type === "agenteyes-element-picked") {
     postToBridge({ ...message.data, capturedAt: new Date().toISOString() });
     return; // no response expected here — sender is the content script
