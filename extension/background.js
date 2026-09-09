@@ -581,7 +581,9 @@ function scanSurface(maxNodes) {
           landmark: prom.landmark || undefined,
           prominence: prom.prominence,
           identityKey: withOrdinal,
-          label: accessibleName(node) || node.tagName.toLowerCase(),
+          // Collapse whitespace: a commit row's innerText carries the whole
+          // message body, and a label spanning lines is unreadable in any report.
+          label: (accessibleName(node) || node.tagName.toLowerCase()).replace(/\s+/g, " ").trim(),
           kind: c.kind,
           evidence: c.evidence,
           enabled: !isDisabled(node),

@@ -135,6 +135,28 @@ silently trusted.
 Same-origin iframes are skipped and counted rather than silently omitted. Scans
 stop after 20,000 nodes and report `truncated: true` instead of hanging the tab.
 
+### Diffing snapshots
+
+```bash
+bun run diff --list                    # ids and health
+bun run diff <before-id> <after-id>
+```
+
+Reports added, removed, renamed and changed actions, most prominent first, so a
+report leads with a primary control disappearing rather than a footer link
+moving. Renames are paired rather than shown as a removal plus an addition —
+semantic ids include the label, so without pairing every rename makes a small
+change look like a large one.
+
+A diff is always produced. When the snapshots are poorly comparable the warnings
+are printed above the counts rather than the diff being withheld: a virtualised
+table whose ids are mostly position-dependent is hard to diff and still worth
+looking at.
+
+**Known limitation:** inserting one item at the top of a list is reported as many
+renames, because rows below it shift. The report is right row-by-row and wrong
+as an account of the change.
+
 ### Ranking
 
 Each action also records the **landmark** it sits in and a **prominence** score,

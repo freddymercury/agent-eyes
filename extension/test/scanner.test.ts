@@ -158,3 +158,20 @@ test("the ordinal separator cannot collide with a normalized label", () => {
   expect(keys[1]).toContain("~");
   expect(r.actions[0].id).not.toBe(r.actions[1].id);
 });
+
+test("labels are single-line, whatever the element contains", () => {
+  // A commit row's innerText carries the whole message body; a multi-line label
+  // is unreadable in a diff report and useless as a column.
+  const win = new Window({ url: "https://example.test/app" });
+  const doc = win.document;
+  doc.body.innerHTML = `<main><a href="/c">Fix the parser\n\nA longer body\nacross lines</a></main>`;
+  const g = globalThis as any;
+  g.window = win; g.document = doc; g.CSS = { escape: (s: string) => s };
+  g.location = { href: "https://example.test/app" };
+  g.getComputedStyle = () => ({ cursor: "auto", visibility: "visible", display: "block" });
+  for (const el of doc.querySelectorAll("*") as any) el.getClientRects = () => [{ width: 10, height: 10 }];
+
+  const r = scanSurface(20000);
+  expect(r.actions[0].label).not.toContain("\n");
+  expect(r.actions[0].label).toBe("Fix the parser A longer body across lines");
+});
