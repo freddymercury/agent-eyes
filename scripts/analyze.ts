@@ -74,53 +74,53 @@ function report(path: string, s: Scan) {
   for (const [key, count] of dupes.slice(0, 3)) console.log(`     ${count}x  ${key}`);
 }
 
-/** Same page scanned twice with no change: any id movement is a pure bug. */
+/**
+ * Same page scanned twice. Ids that vanish are only a bug if the *thing* is
+ * still there — a rotating carousel genuinely serves different content between
+ * loads, and counting that as instability makes the check useless on any real
+ * page. Classify by label: present under a different id is churn, absent
+ * entirely is the page changing underneath us.
+ */
 function stability(a: Scan, b: Scan) {
-  const ida = a.actions.map((x) => x.id);
-  const idb = b.actions.map((x) => x.id);
-  const setB = new Set(idb);
-  const moved = ida.filter((id) => !setB.has(id));
-  console.log(`\n── reload stability`);
-  console.log(`   actions   ${ida.length} → ${idb.length}`);
-  console.log(
-    `   unstable  ${moved.length} (${pct(moved.length, ida.length)})` +
-      (moved.length ? "   <-- ids changed with no page change; this is a bug" : "   clean"),
-  );
-  for (const id of moved.slice(0, 5)) {
-    const act = a.actions.find((x) => x.id === id)!;
-    console.log(`     "${act.label}"  ${act.identityKey}  [${act.identityStrategy}]`);
-  }
-  return moved.length;
-}
+  const idsB = new Set(b.actions.map((x) => x.id));
+  const labelsB = new Map<string, string>();
+  for (const x of b.actions) if (!labelsB.has(x.label.trim())) labelsB.set(x.label.trim(), x.id);
 
-/** One row per scan, for comparing many sites at a glance. */
-function table(rows: Array<{ path: string; scan: Scan }>) {
-  const cell = (v: string, w: number) => v.padEnd(w);
-  const num = (v: string, w: number) => v.padStart(w);
-  console.log(
-    `\n${cell("site", 22)} ${num("acts", 5)} ${num("ms", 5)} ${num("nodes", 6)} ` +
-      `${num("testid", 7)} ${num("seman", 6)} ${num("posit", 6)} ${num("ord-dep", 8)} ${num("lowconf", 8)} ${num("shadow", 7)}`,
-  );
-  console.log("-".repeat(94));
-  for (const { path, scan } of rows) {
-    const n = scan.actions.length || 1;
-    const st = { testid: 0, semantic: 0, positional: 0 } as Record<IdentityStrategy, number>;
-    for (const a of scan.actions) st[a.identityStrategy]++;
-    const ord = scan.actions.filter((a) => a.ordinalDisambiguated).length;
-    const low = scan.actions.filter((a) => a.confidence < 0.3).length;
-    const name = (path.split("/").pop() ?? path).replace(/\.json$/, "");
-    console.log(
-      `${cell(name.slice(0, 22), 22)} ${num(String(scan.actions.length), 5)} ` +
-        `${num(String(scan.stats?.durationMs ?? "?"), 5)} ${num(String(scan.stats?.nodesVisited ?? "?"), 6)} ` +
-        `${num(pct(st.testid, n), 7)} ${num(pct(st.semantic, n), 6)} ${num(pct(st.positional, n), 6)} ` +
-        `${num(pct(ord, n), 8)} ${num(pct(low, n), 8)} ${num(String(scan.stats?.shadowRootsTraversed ?? 0), 7)}` +
-        (scan.stats?.truncated ? "  TRUNCATED" : ""),
-    );
+  const keyA = new Map(a.actions.map((x) => [x.id, x.identityKey]));
+  const keyB = new Map(b.actions.map((x) => [x.id, x.identityKey]));
+
+  const churned: Array<{ label: string; from: string; to: string }> = [];
+  let contentChanged = 0;
+  for (const x of a.actions) {
+    if (idsB.has(x.id)) continue;
+    const hit = labelsB.get(x.label.trim());
+    if (hit) churned.push({ label: x.label, from: x.id, to: hit });
+    else contentChanged++;
   }
+
+  // An id that survives but now describes something else is the worst case:
+  // silently wrong rather than visibly missing.
+  let remapped = 0;
+  for (const [id, k] of keyA) if (keyB.has(id) && keyB.get(id) !== k) remapped++;
+
+  const dupA = a.actions.length - new Set(a.actions.map((x) => x.id)).size;
+  const dupB = b.actions.length - new Set(b.actions.map((x) => x.id)).size;
+  const ordDep = a.actions.filter((x) => x.ordinalDisambiguated).length;
+
+  console.log(`\n-- reload stability`);
+  console.log(`   actions          ${a.actions.length} -> ${b.actions.length}`);
+  console.log(`   ordinal-dep      ${ordDep} (${pct(ordDep, a.actions.length)}) — the ids most at risk`);
+  console.log(`   content changed  ${contentChanged} — label gone from the page, not a churn`);
+  console.log(`   duplicate ids    A=${dupA} B=${dupB}${dupA + dupB > 0 ? "   <-- ids are not unique" : ""}`);
   console.log(
-    "\n  posit  = ids that will churn      ord-dep = position-dependent whatever the strategy",
+    `   REMAPPED         ${remapped}${remapped ? "   <-- an id now describes a different action" : ""}`,
   );
-  console.log("  lowconf = cursor-only detections   shadow = shadow roots traversed");
+  console.log(
+    `   CHURNED          ${churned.length} (${pct(churned.length, a.actions.length)})` +
+      (churned.length ? "   <-- same thing, new id: a bug" : "   clean"),
+  );
+  for (const c of churned.slice(0, 5)) console.log(`     "${c.label.slice(0, 50)}"  ${c.from} -> ${c.to}`);
+  return churned.length + remapped + dupA + dupB;
 }
 
 const args = Bun.argv.slice(2);

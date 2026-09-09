@@ -196,3 +196,22 @@ test("a volatile count in parentheses still normalizes away", () => {
   const b = render(`<main><button>Cart (147)</button></main>`).actions[0];
   expect(a.id).toBe(b.id);
 });
+
+test("scanning the same markup twice yields byte-identical ids", () => {
+  // The reload-stability property, as a unit test so a regression is caught
+  // without needing a live page.
+  const html = `<main>
+    <button>Save</button>
+    <a href="/next">Next</a>
+    <ul>
+      <li><h3>Blue widget</h3><button>Add to cart</button></li>
+      <li><h3>Red widget</h3><button>Add to cart</button></li>
+    </ul>
+    <button data-testid="del">Delete</button>
+  </main>`;
+  const a = render(html);
+  const b = render(html);
+  expect(a.actions.map((x: any) => x.id)).toEqual(b.actions.map((x: any) => x.id));
+  // and ids must be unique within a scan, or "stable" means nothing
+  expect(new Set(a.actions.map((x: any) => x.id)).size).toBe(a.actions.length);
+});
