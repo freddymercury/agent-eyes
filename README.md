@@ -366,7 +366,9 @@ when no scan exists, for the same reason.
 | Env var | Default | Meaning |
 |---|--:|---|
 | `AGENT_EYES_MODE` | `read` | `readwrite` enables the write plane (not implemented yet) |
-| `AGENT_EYES_STALE_AFTER` | `30` | seconds before an observation is reported stale |
+| `AGENT_EYES_STALE_AFTER` | `30` | fallback only — the server's threshold wins when reachable |
+| `AGENT_EYES_WATCH_STALE` | `60` | server-side staleness threshold, the authoritative one |
+| `AGENT_EYES_WATCH_EXPIRE` | `900` | seconds of silence before a watcher file is swept |
 | `AGENT_EYES_DIR` | `~/.agenteyes` | capture directory; override to run instances side by side |
 | `AGENT_EYES_SERVER` | `http://127.0.0.1:8765` | server the bridge writes snapshots through |
 

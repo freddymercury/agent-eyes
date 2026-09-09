@@ -229,3 +229,23 @@ test("F4: comparability warnings surface through the bridge", async () => {
   });
   expect((out.content as Array<{ text: string }>)[0]!.text).toContain("no snapshot");
 });
+
+test("staleness comes from the server, not a second local threshold", async () => {
+  // Four components each had their own rule — 30s here, 60s in the server,
+  // 10 minutes in draft-drift, none in the popup. The server sweeps and
+  // publishes a threshold, so it is the one place that knows.
+  const res = await fetch("http://127.0.0.1:8765/watch").catch(() => null);
+  if (!res?.ok) return; // server not running in this environment; nothing to assert
+
+  const server = (await res.json()) as { staleAfterSeconds: number; watchers: unknown[] };
+  const out = await client.callTool({ name: "agent_eyes_get_staleness", arguments: {} });
+  const st = JSON.parse((out.content as Array<{ text: string }>)[0]!.text);
+
+  if (server.watchers.length) {
+    expect(st.staleAfterSeconds).toBe(server.staleAfterSeconds);
+  } else {
+    // With no watchers the bridge falls back to its own capture check, which
+    // must still answer rather than erroring.
+    expect(["no_capture", "age", "tab_closed", undefined]).toContain(st.reason);
+  }
+});

@@ -128,7 +128,43 @@ export async function readContext(): Promise<SurfaceContext | null> {
   }
 }
 
-export async function readStaleness(staleAfterSeconds: number): Promise<SurfaceStaleness> {
+/**
+ * Ask the server whether the watchers are stale.
+ *
+ * The server already sweeps and already publishes a threshold, so it is the
+ * one place that knows. Recomputing here produced two answers to the same
+ * question with different thresholds — 30s in the bridge, 60s in the server,
+ * 10 minutes in draft-drift, none in the popup — which is exactly how a frozen
+ * watcher went on driving advice for five rounds of a live draft.
+ *
+ * Falls back to local computation when the server is unreachable, since a
+ * bridge that cannot answer at all is worse than one answering approximately.
+ */
+async function serverStaleness(): Promise<{ staleAfterSeconds: number; watchers: Array<{ ageSeconds: number; stale: boolean }> } | null> {
+  try {
+    const res = await fetch(`${SERVER_URL}/watch`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return (await res.json()) as { staleAfterSeconds: number; watchers: Array<{ ageSeconds: number; stale: boolean }> };
+  } catch {
+    return null;
+  }
+}
+
+export async function readStaleness(fallbackSeconds: number): Promise<SurfaceStaleness> {
+  const fromServer = await serverStaleness();
+  if (fromServer && fromServer.watchers.length) {
+    const staleAfterSeconds = fromServer.staleAfterSeconds;
+    const age = Math.min(...fromServer.watchers.map((w) => w.ageSeconds));
+    const allStale = fromServer.watchers.every((w) => w.stale);
+    return {
+      ageSeconds: age,
+      stale: allStale,
+      staleAfterSeconds,
+      reason: allStale ? "age" : undefined,
+    };
+  }
+
+  const staleAfterSeconds = fromServer?.staleAfterSeconds ?? fallbackSeconds;
   const watchers = await readWatchers();
   if (!watchers.length) {
     const ctx = await readContext();
