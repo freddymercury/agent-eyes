@@ -262,6 +262,64 @@ function scanSurface(maxNodes) {
     return parts.join(">");
   }
 
+  // Structural signatures, cached per element. Recomputing these while walking
+  // ancestors for every action is quadratic on a large page.
+  const sigCache = new WeakMap();
+
+  /**
+   * A shape fingerprint for an element: its tag plus the tag sequence of its
+   * descendants to a bounded depth.
+   *
+   * Deliberately ignores classes and text. Two product cards differ in content
+   * and styling but share a shape, and class names are exactly the thing that
+   * cannot be relied on — the same reason they are never used for identity.
+   */
+  function structuralSignature(el, depth) {
+    if (depth === undefined) depth = 3;
+    const cached = sigCache.get(el);
+    if (cached !== undefined) return cached;
+    const parts = [el.tagName];
+    let count = 0;
+    const walk = (node, d) => {
+      if (d > depth || count > 40) return;
+      for (const c of node.children) {
+        parts.push(d + c.tagName);
+        count++;
+        walk(c, d + 1);
+      }
+    };
+    walk(el, 1);
+    const sig = parts.join(",");
+    sigCache.set(el, sig);
+    return sig;
+  }
+
+  /**
+   * The nearest ancestor that is one of several structurally identical siblings.
+   *
+   * This is what a "row" or "card" actually is, independent of markup: the
+   * Yahoo draft client uses table rows, YouTube comments use custom elements,
+   * and commerce grids use plain divs. Keying off li/tr/article recognises only
+   * the first, which is why repeated controls in the other two stayed
+   * position-dependent.
+   */
+  function repeatedUnitAncestor(el) {
+    let n = el.parentElement;
+    for (let hops = 0; n && hops < 8; hops++, n = n.parentElement) {
+      const parent = n.parentElement;
+      if (!parent || parent.children.length < 3) continue;
+      const sig = structuralSignature(n);
+      let same = 0;
+      for (const c of parent.children) {
+        if (structuralSignature(c) === sig && ++same >= 3) break;
+      }
+      // Three is the smallest count that distinguishes a repeated unit from a
+      // coincidental pair of similar siblings.
+      if (same >= 3) return n;
+    }
+    return null;
+  }
+
   /**
    * Nearest enclosing container that has a distinctive name of its own.
    *
@@ -273,6 +331,8 @@ function scanSurface(maxNodes) {
    */
   function containerName(el) {
     let n = el.parentElement;
+    // Semantic containers are checked first because they are unambiguous when
+    // present; the structural fallback below catches everything else.
     // Anything inside the control we are identifying is its own label, not the
     // container's — a row of "Draft" buttons would otherwise all resolve to
     // "draft" and stay indistinguishable.
@@ -305,6 +365,21 @@ function scanSurface(maxNodes) {
         return "";
       }
       n = n.parentElement;
+    }
+
+    // No semantic container. Fall back to a structurally repeated ancestor,
+    // which is what a row or card is on a page that does not use li or tr.
+    const unit = repeatedUnitAncestor(el);
+    if (unit) {
+      const own = unit.getAttribute && unit.getAttribute("aria-label");
+      if (own && own.trim()) return normalizeLabel(own).slice(0, 40);
+      const leaves = unit.querySelectorAll("*");
+      for (let i = 0; i < leaves.length && i < 60; i++) {
+        const c = leaves[i];
+        if (c.children.length || isSelf(c)) continue;
+        const t = normalizeLabel(c.innerText || c.textContent || "");
+        if (t.length >= 2 && t.length <= 40) return t;
+      }
     }
     return "";
   }

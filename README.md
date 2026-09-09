@@ -238,8 +238,18 @@ silent — so classes are simply never consulted.
 | `positional` | DOM path | **expected to churn** — reported so it can be discounted |
 
 Labels are normalized before hashing, so `Cart (3)` and `Cart (12)` are the same
-action. Duplicate controls ("Edit" once per row) are disambiguated by ordinal
-within their ancestor path.
+action. Repeated controls are anchored by the row or card they sit in, so three
+"Add to cart" buttons are told apart by product rather than by position.
+
+A row or card is found semantically first (`li`, `tr`, `article`, or an ARIA
+role), and otherwise **structurally**: the nearest ancestor that is one of three
+or more siblings sharing a shape. Shape means tag names, never classes — the
+same reason classes are not used for identity. This is what recognises a card in
+a `div` grid, a comment in a custom element, and a row in a virtualised table,
+none of which use semantic markup.
+
+Ordinals remain as a last resort, and any id that needed one is marked
+`ordinalDisambiguated` so it can be discounted.
 
 Changes that *should* alter identity still do: renaming a control, or moving it
 into a different landmark, both produce a new id — those are real capability
