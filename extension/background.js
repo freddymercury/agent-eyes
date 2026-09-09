@@ -203,7 +203,10 @@ function scanSurface(maxNodes) {
       .replace(/\s+/g, " ")
       .replace(/\d+/g, "N")
       .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
-      .replace(/[^a-z0-9'\- ]/g, "")
+      // Unicode-aware: an ASCII-only class silently empties every label on a
+      // non-English UI, sending the whole page to positional identity, and
+      // mangles accented Latin ("Café" -> "caf").
+      .replace(/[^\p{L}\p{N}'\- ]/gu, "")
       .trim()
       .slice(0, 60);
   }

@@ -100,3 +100,29 @@ test("identityKey is human-readable for debugging churn", () => {
   expect(a.identityKey).toContain("button");
   expect(a.identityKey).toContain("save");
 });
+
+test("non-Latin and accented labels keep their identity", () => {
+  // An ASCII-only normalizer empties these, which silently sends an entire
+  // non-English application to positional ids.
+  const scan = render(`<main>
+    <button>購入する</button>
+    <button>Заказать</button>
+    <button>Café</button>
+    <button>Épingler</button>
+  </main>`);
+  expect(scan.actions).toHaveLength(4);
+  for (const a of scan.actions) {
+    expect(a.identityStrategy).toBe("semantic");
+    // the key must actually carry the name, not an empty slot
+    expect(a.identityKey).not.toMatch(/^button\|\|/);
+  }
+  // and distinct labels must not collide
+  expect(new Set(scan.actions.map((a: any) => a.id)).size).toBe(4);
+});
+
+test("accented characters are preserved, not stripped", () => {
+  const a = render(`<main><button>Café</button></main>`).actions[0];
+  const b = render(`<main><button>Cafe</button></main>`).actions[0];
+  expect(a.identityKey).toContain("café");
+  expect(a.id).not.toBe(b.id);
+});
