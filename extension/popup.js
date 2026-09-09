@@ -40,7 +40,8 @@ document.getElementById("scan-surface").addEventListener("click", async () => {
 });
 
 document.getElementById("save-snapshot").addEventListener("click", async () => {
-  const name = window.prompt("Name this snapshot:", document.title || "snapshot");
+  const { suggestion } = await chrome.runtime.sendMessage({ type: "agenteyes-popup-suggest-name" });
+  const name = window.prompt("Name this snapshot:", suggestion || "snapshot");
   if (!name) return;
   const version = window.prompt("Release version (optional):", "") || undefined;
   setStatus("scanning and saving\u2026");
@@ -53,6 +54,7 @@ document.getElementById("save-snapshot").addEventListener("click", async () => {
     setStatus("failed — is the server running?", "err");
     return;
   }
+  showSaved(res);
   const h = res.health || {};
   // Surface the qualities that decide whether a later diff is trustworthy,
   // while the user can still do something about it.
@@ -63,6 +65,24 @@ document.getElementById("save-snapshot").addEventListener("click", async () => {
     warn ? "" : "ok"
   );
 });
+
+function showSaved(res) {
+  const box = document.getElementById("saved");
+  const path = document.getElementById("saved-path");
+  if (!res.path) return;
+  path.textContent = res.path;
+  box.style.display = "block";
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(res.path);
+    setStatus("path copied", "ok");
+  };
+  path.onclick = copy;
+  document.getElementById("saved-copy").onclick = copy;
+  // Open the http URL rather than file://, which Chrome blocks from an
+  // extension unless the user has granted file access.
+  document.getElementById("saved-open").onclick = () => chrome.tabs.create({ url: res.url });
+}
 
 function renderWatchers(watchers) {
   const box = document.getElementById("watchers");

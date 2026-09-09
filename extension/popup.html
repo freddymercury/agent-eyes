@@ -55,6 +55,18 @@
     font-size:10.5px; padding:5px 8px; color:var(--text-muted);
     justify-content:center; margin-top:2px;
   }
+  #saved{
+    display:none; margin-top:8px; padding:7px 8px; background:var(--raised);
+    border:1px solid var(--sense-dim); border-radius:6px;
+  }
+  #saved .p{
+    font-family:monospace; font-size:9.5px; color:var(--text-muted);
+    word-break:break-all; line-height:1.35; cursor:pointer;
+  }
+  #saved .p:hover{color:var(--sense);}
+  #saved .links{margin-top:6px; display:flex; gap:10px;}
+  #saved a{color:var(--sense); font-size:10.5px; text-decoration:none; cursor:pointer;}
+  #saved a:hover{text-decoration:underline;}
   #status{
     font-size:10.5px; color:var(--text-muted); font-family:monospace;
     text-align:center; margin-top:10px; min-height:14px;
@@ -88,6 +100,13 @@
   <div class="sec">Active watchers</div>
   <div id="watchers"><div class="empty">none yet</div></div>
   <button id="clear" style="display:none">Remove all</button>
+  <div id="saved">
+    <div class="p" id="saved-path" title="click to copy"></div>
+    <div class="links">
+      <a id="saved-open">open</a>
+      <a id="saved-copy">copy path</a>
+    </div>
+  </div>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>

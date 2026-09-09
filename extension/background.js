@@ -808,6 +808,46 @@ const WATCH_INTERVAL_MS = 5000;
 const SCAN_MAX_NODES = 20000;
 
 /**
+ * A default name derived from where the snapshot was taken.
+ *
+ * document.title is a poor default — it is decorated with unread counts and
+ * notification badges ("(2) Home / X"), so two snapshots of the same page get
+ * different names. Host plus the first path segments identifies the view, and
+ * a timestamp keeps repeated snapshots of it distinct.
+ */
+function suggestSnapshotName(url) {
+  let host = "page";
+  let path = "";
+  try {
+    const u = new URL(url);
+    host = u.hostname.replace(/^www\./, "");
+    path = u.pathname;
+  } catch (err) {
+    /* fall through to defaults */
+  }
+  const slug = (str, max) =>
+    str
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, max);
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const stamp =
+    d.getFullYear() +
+    pad(d.getMonth() + 1) +
+    pad(d.getDate()) +
+    "-" +
+    pad(d.getHours()) +
+    pad(d.getMinutes());
+  const parts = [slug(host, 40)];
+  const p = slug(path.split("/").filter(Boolean).slice(0, 3).join("-"), 40);
+  if (p) parts.push(p);
+  parts.push(stamp);
+  return parts.join("-");
+}
+
+/**
  * Save the current surface as a named snapshot.
  *
  * Scans first rather than reusing the last scan: a snapshot named for a release
@@ -856,7 +896,14 @@ async function saveSnapshot_(tabId, name, release) {
     });
     const body = await res.json();
     flashBadge(res.ok ? "\u2713" : "!", res.ok ? "#4FD8C4" : "#E5484D");
-    return { ok: res.ok, meta: body.meta, health: meta.health };
+    return {
+      ok: res.ok,
+      meta: body.meta,
+      health: meta.health,
+      path: body.path,
+      url: body.url,
+      fileUrl: body.fileUrl
+    };
   } catch (err) {
     flashBadge("!", "#E5484D");
     return { ok: false, error: String(err) };
@@ -952,6 +999,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "agenteyes-popup-scan-surface") {
     scanSurface_().then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message?.type === "agenteyes-popup-suggest-name") {
+    resolveTab(null).then((tab) =>
+      sendResponse({ suggestion: suggestSnapshotName(tab && tab.url ? tab.url : "") })
+    );
     return true;
   }
 

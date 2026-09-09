@@ -29,6 +29,7 @@ const WATCH_DIR = path.join(DIR, "watch");
 // export, backup and version control free. The cost is that snapshots are no
 // longer confined to the browser profile.
 const SNAP_DIR = path.join(DIR, "snapshots");
+const TRASH_DIR = path.join(DIR, "snapshots", ".trash");
 // Latest interactive-surface scan. Overwritten rather than appended: it is a
 // current-state file, like context.json, not a history.
 const SURFACE_FILE = path.join(DIR, "surface.json");
@@ -102,7 +103,7 @@ function snapshotPath(id) {
 function listSnapshots() {
   return fs
     .readdirSync(SNAP_DIR)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".json") && !f.startsWith("."))
     .map((f) => {
       try {
         return JSON.parse(fs.readFileSync(path.join(SNAP_DIR, f), "utf8")).meta;
@@ -202,11 +203,36 @@ const server = http.createServer((req, res) => {
         if (!data || !data.snapshot || !data.meta) {
           return send(res, 400, JSON.stringify({ ok: false, error: "expected { meta, snapshot }" }));
         }
-        const id = `${new Date().toISOString().replace(/[:.]/g, "-")}_${Math.random().toString(36).slice(2, 8)}`;
+        // Include a slug of the name so the directory is readable at a glance;
+        // the timestamp keeps it unique and sortable. Slugified to the same
+        // charset the id guard accepts, so a crafted name cannot escape.
+        const slug = String(data.meta.name || "snapshot")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 60) || "snapshot";
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const id = `${stamp}_${slug}`;
         const stored = { schemaVersion: 1, meta: { ...data.meta, id, createdAt: new Date().toISOString() }, snapshot: data.snapshot };
         fs.writeFileSync(snapshotPath(id), JSON.stringify(stored, null, 2), "utf8");
-        console.log(`[agenteyes] snapshot saved: ${stored.meta.name} (${id}) — ${stored.meta.health?.actions ?? "?"} actions`);
-        send(res, 200, JSON.stringify({ ok: true, id, meta: stored.meta }));
+        const file = snapshotPath(id);
+        console.log(`[agenteyes] snapshot saved: ${stored.meta.name} — ${stored.meta.health?.actions ?? "?"} actions`);
+        console.log(`[agenteyes]   ${file}`);
+        // Both forms: the absolute path for the filesystem, and a URL that
+        // actually opens — file:// is blocked from an extension popup unless
+        // the user has granted file access, http always works.
+        send(
+          res,
+          200,
+          JSON.stringify({
+            ok: true,
+            id,
+            meta: stored.meta,
+            path: file,
+            fileUrl: `file://${encodeURI(file)}`,
+            url: `http://localhost:${PORT}/snapshot/${id}`
+          })
+        );
       } catch (err) {
         send(res, 400, JSON.stringify({ ok: false, error: String(err) }));
       }
@@ -228,9 +254,15 @@ const server = http.createServer((req, res) => {
     if (!fs.existsSync(file)) return send(res, 404, JSON.stringify({ ok: false, error: "not found" }));
     if (req.method === "GET") return send(res, 200, fs.readFileSync(file, "utf8"));
     if (req.method === "DELETE") {
-      fs.unlinkSync(file);
-      console.log(`[agenteyes] snapshot deleted: ${id}`);
-      return send(res, 200, JSON.stringify({ ok: true }));
+      // Move to a trash directory rather than unlinking. Snapshots are
+      // deliberate user artifacts and a delete is easy to issue by accident,
+      // including from a script.
+      if (!fs.existsSync(TRASH_DIR)) fs.mkdirSync(TRASH_DIR, { recursive: true });
+      const dest = path.join(TRASH_DIR, `${id}.json`);
+      fs.renameSync(file, dest);
+      console.log(`[agenteyes] snapshot trashed: ${id}`);
+      console.log(`[agenteyes]   recoverable at ${dest}`);
+      return send(res, 200, JSON.stringify({ ok: true, trashed: dest }));
     }
   }
 
