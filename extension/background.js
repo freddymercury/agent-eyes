@@ -264,6 +264,17 @@ function scanSurface(maxNodes) {
           const t = normalizeLabel(anchor.innerText || anchor.getAttribute("aria-label") || "");
           if (t) return t.slice(0, 40);
         }
+        // Cards have headings; data-table rows do not. The distinguishing text
+        // is just a cell's contents — a player name, an order number — so fall
+        // back to the first leaf with short, distinctive text. Leaves only, and
+        // bounded, to avoid picking up a whole row of volatile statistics.
+        const leaves = n.querySelectorAll("*");
+        for (let i = 0; i < leaves.length && i < 60; i++) {
+          const c = leaves[i];
+          if (c.children.length) continue;
+          const t = normalizeLabel(c.innerText || c.textContent || "");
+          if (t.length >= 2 && t.length <= 40) return t;
+        }
         return "";
       }
       n = n.parentElement;
@@ -417,6 +428,18 @@ function scanSurface(maxNodes) {
     return st.visibility !== "hidden" && st.display !== "none";
   }
 
+  // Which testids actually identify a single element. An app-provided id that
+  // appears once is the most durable anchor there is and should survive a
+  // rename; one repeated per row identifies a component, not an instance, and
+  // needs the name to separate instances. Deciding per testid gets both.
+  const testIdCounts = new Map();
+  for (const el of document.querySelectorAll(
+    "[data-testid],[data-test-id],[data-test],[data-cy],[data-qa]"
+  )) {
+    const v = testIdOf(el);
+    if (v) testIdCounts.set(v, (testIdCounts.get(v) || 0) + 1);
+  }
+
   const actions = [];
   const queue = [document.body];
   // Elements already recorded, so a descendant that is merely styled clickable
@@ -466,7 +489,12 @@ function scanSurface(maxNodes) {
         let identityKey;
         if (testId) {
           identityStrategy = "testid";
-          identityKey = "testid:" + testId;
+          // A testid is often per-component rather than per-instance —
+          // commit-row-item on every commit, testid:reply on every post — so
+          // keep the name alongside it. Without this the one thing that would
+          // separate them is thrown away in favour of position.
+          const unique = (testIdCounts.get(testId) || 0) <= 1;
+          identityKey = "testid:" + testId + (unique || !name ? "" : "|" + name);
         } else if (name || role) {
           identityStrategy = name ? "semantic" : "positional";
           identityKey = [role, name, path].join("|");

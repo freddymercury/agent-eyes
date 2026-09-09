@@ -123,6 +123,34 @@ function stability(a: Scan, b: Scan) {
   return churned.length + remapped + dupA + dupB;
 }
 
+/** One row per scan, for comparing many sites at a glance. */
+function table(rows: Array<{ path: string; scan: Scan }>) {
+  const cell = (v: string, w: number) => v.padEnd(w);
+  const num = (v: string, w: number) => v.padStart(w);
+  console.log(
+    `\n${cell("site", 22)} ${num("acts", 5)} ${num("ms", 5)} ${num("nodes", 6)} ` +
+      `${num("testid", 7)} ${num("seman", 6)} ${num("posit", 6)} ${num("ord-dep", 8)} ${num("lowconf", 8)} ${num("shadow", 7)}`,
+  );
+  console.log("-".repeat(94));
+  for (const { path, scan } of rows) {
+    const n = scan.actions.length || 1;
+    const st = { testid: 0, semantic: 0, positional: 0 } as Record<IdentityStrategy, number>;
+    for (const a of scan.actions) st[a.identityStrategy]++;
+    const ord = scan.actions.filter((a) => a.ordinalDisambiguated).length;
+    const low = scan.actions.filter((a) => a.confidence < 0.3).length;
+    const name = (path.split("/").pop() ?? path).replace(/\.json$/, "");
+    console.log(
+      `${cell(name.slice(0, 22), 22)} ${num(String(scan.actions.length), 5)} ` +
+        `${num(String(scan.stats?.durationMs ?? "?"), 5)} ${num(String(scan.stats?.nodesVisited ?? "?"), 6)} ` +
+        `${num(pct(st.testid, n), 7)} ${num(pct(st.semantic, n), 6)} ${num(pct(st.positional, n), 6)} ` +
+        `${num(pct(ord, n), 8)} ${num(pct(low, n), 8)} ${num(String(scan.stats?.shadowRootsTraversed ?? 0), 7)}` +
+        (scan.stats?.truncated ? "  TRUNCATED" : ""),
+    );
+  }
+  console.log("\n  posit  = ids that will churn      ord-dep = position-dependent whatever the strategy");
+  console.log("  lowconf = cursor-only detections   shadow = shadow roots traversed");
+}
+
 const args = Bun.argv.slice(2);
 const load = async (p: string) => (await Bun.file(p).json()) as Scan;
 

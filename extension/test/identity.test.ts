@@ -215,3 +215,32 @@ test("scanning the same markup twice yields byte-identical ids", () => {
   // and ids must be unique within a scan, or "stable" means nothing
   expect(new Set(a.actions.map((x: any) => x.id)).size).toBe(a.actions.length);
 });
+
+test("data-table rows are scoped by cell text, not just headings", () => {
+  // The Yahoo draft client shape: a table of unnamed action buttons, one per
+  // row, where the distinguishing text is a plain cell rather than a heading.
+  const row = (name: string) =>
+    `<tr><td><div><button></button></div></td><td><div>${name}</div></td><td><div>RB</div></td></tr>`;
+  const scan = render(`<main><table><tbody>
+    ${row("J. Gibbs")}${row("B. Robinson")}${row("P. Nacua")}
+  </tbody></table></main>`);
+  const buttons = scan.actions.filter((a: any) => a.domExposure.tagName === "button");
+  expect(buttons).toHaveLength(3);
+  expect(new Set(buttons.map((b: any) => b.id)).size).toBe(3);
+  // the point: none needed an ordinal
+  expect(buttons.every((b: any) => b.ordinalDisambiguated === false)).toBe(true);
+});
+
+test("a shared testid is separated by name rather than by position", () => {
+  // GitHub reuses data-testid="commit-row-item" on every commit; X reuses
+  // testid:reply on every post. Discarding the name in favour of the testid
+  // throws away the only thing that distinguishes them.
+  const scan = render(`<main><ul>
+    <li><a href="/1" data-testid="row">Fix the parser</a></li>
+    <li><a href="/2" data-testid="row">Add a scanner</a></li>
+  </ul></main>`);
+  const rows = scan.actions.filter((a: any) => a.identityStrategy === "testid");
+  expect(rows).toHaveLength(2);
+  expect(rows.every((r: any) => r.ordinalDisambiguated === false)).toBe(true);
+  expect(new Set(rows.map((r: any) => r.id)).size).toBe(2);
+});
