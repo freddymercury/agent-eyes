@@ -235,6 +235,7 @@ silent — so classes are simply never consulted.
 |---|---|---|
 | `testid` | `data-testid` and friends | survives even a label change |
 | `semantic` | role, normalized name, ancestor role path, ordinal | survives restyling and re-wrapping |
+| `container` | the row or card it sits in | survives reordering; churns only if the row's content changes |
 | `positional` | DOM path | **expected to churn** — reported so it can be discounted |
 
 Labels are normalized before hashing, so `Cart (3)` and `Cart (12)` are the same

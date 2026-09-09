@@ -175,10 +175,14 @@ export interface DomExposure {
 /**
  * How an action's id was derived, in descending order of durability.
  *
+ * `container` means the element has no name of its own but sits in a row or card
+ * that does — a Draft button beside a player's name. Anchored, not positional:
+ * it survives reordering, and only churns if the row's own content changes.
+ *
  * `positional` ids are expected to churn across releases and should be treated
  * as unreliable for comparison — surfacing this is the point.
  */
-export type IdentityStrategy = "testid" | "semantic" | "positional";
+export type IdentityStrategy = "testid" | "semantic" | "container" | "positional";
 
 export interface Action {
   /** Hash of `identityKey`. Stability depends on `identityStrategy`. */

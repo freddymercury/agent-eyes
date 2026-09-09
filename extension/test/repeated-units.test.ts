@@ -71,3 +71,22 @@ test("a semantic container still wins when one exists", () => {
   expect(gos.every((g: any) => g.ordinalDisambiguated === false)).toBe(true);
   expect(gos[0].identityKey).toContain("first");
 });
+
+test("an unnamed control anchored by its row is 'container', not 'positional'", () => {
+  // The draft client's hundred unnamed Draft buttons are each pinned to a
+  // player. Calling them positional said they would churn when they will not,
+  // and reported 83% of that page as fragile.
+  const row = (name: string) =>
+    `<div><div>${name}</div><div><button></button></div></div>`;
+  const scan = render(`<div>${row("J. Gibbs")}${row("B. Robinson")}${row("P. Nacua")}</div>`);
+  const buttons = scan.actions.filter((a: any) => a.domExposure.tagName === "button");
+  expect(buttons).toHaveLength(3);
+  expect(buttons.every((b: any) => b.identityStrategy === "container")).toBe(true);
+  expect(buttons.every((b: any) => b.ordinalDisambiguated === false)).toBe(true);
+  expect(new Set(buttons.map((b: any) => b.id)).size).toBe(3);
+});
+
+test("a truly unanchored control is still positional", () => {
+  const scan = render(`<div><div role="button" tabindex="0"></div></div>`);
+  expect(scan.actions[0].identityStrategy).toBe("positional");
+});

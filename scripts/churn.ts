@@ -66,7 +66,7 @@ export function churn(before: Scan, after: Scan): ChurnReport {
     }
   }
 
-  const strategies = { testid: 0, semantic: 0, positional: 0 } as Record<IdentityStrategy, number>;
+  const strategies = { testid: 0, semantic: 0, container: 0, positional: 0 } as Record<IdentityStrategy, number>;
   for (const a of after.actions) strategies[a.identityStrategy]++;
 
   return {

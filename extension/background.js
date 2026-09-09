@@ -657,6 +657,11 @@ function scanSurface(maxNodes) {
           identityKey = domPath(node);
         }
 
+        // An unnamed control anchored by its row is not positional. Saying so
+        // overstated fragility badly: the draft client's hundred unnamed Draft
+        // buttons are each pinned to a player, and reported 83% positional.
+        if (container && identityStrategy === "positional") identityStrategy = "container";
+
         // Scope by container before counting ordinals, so repeated controls in
         // distinct cards stop colliding in the first place.
         if (container) identityKey = identityKey + "@" + container;

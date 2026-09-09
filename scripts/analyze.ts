@@ -26,7 +26,7 @@ const pct = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(1)}%` : "â
 
 function report(path: string, s: Scan) {
   const n = s.actions.length;
-  const strat = { testid: 0, semantic: 0, positional: 0 } as Record<IdentityStrategy, number>;
+  const strat = { testid: 0, semantic: 0, container: 0, positional: 0 } as Record<IdentityStrategy, number>;
   for (const a of s.actions) strat[a.identityStrategy]++;
 
   const byKey = new Map<string, number>();
@@ -58,6 +58,7 @@ function report(path: string, s: Scan) {
   console.log(
     `   identity         testid ${pct(strat.testid, n)}  ` +
       `semantic ${pct(strat.semantic, n)}  ` +
+      `container ${pct(strat.container, n)}  ` +
       `positional ${pct(strat.positional, n)}` +
       (strat.positional / (n || 1) > 0.25 ? "   <-- weak: >25% will churn" : ""),
   );
@@ -129,12 +130,12 @@ function table(rows: Array<{ path: string; scan: Scan }>) {
   const num = (v: string, w: number) => v.padStart(w);
   console.log(
     `\n${cell("site", 22)} ${num("acts", 5)} ${num("ms", 5)} ${num("nodes", 6)} ` +
-      `${num("testid", 7)} ${num("seman", 6)} ${num("posit", 6)} ${num("ord-dep", 8)} ${num("lowconf", 8)} ${num("shadow", 7)}`,
+      `${num("testid", 7)} ${num("seman", 6)} ${num("contnr", 6)} ${num("posit", 6)} ${num("ord-dep", 8)} ${num("lowconf", 8)} ${num("shadow", 7)}`,
   );
   console.log("-".repeat(94));
   for (const { path, scan } of rows) {
     const n = scan.actions.length || 1;
-    const st = { testid: 0, semantic: 0, positional: 0 } as Record<IdentityStrategy, number>;
+    const st = { testid: 0, semantic: 0, container: 0, positional: 0 } as Record<IdentityStrategy, number>;
     for (const a of scan.actions) st[a.identityStrategy]++;
     const ord = scan.actions.filter((a) => a.ordinalDisambiguated).length;
     const low = scan.actions.filter((a) => a.confidence < 0.3).length;
@@ -142,7 +143,7 @@ function table(rows: Array<{ path: string; scan: Scan }>) {
     console.log(
       `${cell(name.slice(0, 22), 22)} ${num(String(scan.actions.length), 5)} ` +
         `${num(String(scan.stats?.durationMs ?? "?"), 5)} ${num(String(scan.stats?.nodesVisited ?? "?"), 6)} ` +
-        `${num(pct(st.testid, n), 7)} ${num(pct(st.semantic, n), 6)} ${num(pct(st.positional, n), 6)} ` +
+        `${num(pct(st.testid, n), 7)} ${num(pct(st.semantic, n), 6)} ${num(pct(st.container, n), 6)} ${num(pct(st.positional, n), 6)} ` +
         `${num(pct(ord, n), 8)} ${num(pct(low, n), 8)} ${num(String(scan.stats?.shadowRootsTraversed ?? 0), 7)}` +
         (scan.stats?.truncated ? "  TRUNCATED" : ""),
     );
