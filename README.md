@@ -79,13 +79,18 @@ curl http://localhost:8765/context
 
 `AGENTS.md` in this project root explains the bridge to the agent itself —
 what the files mean, how to tell if a capture is fresh, how to interpret
-`elementPicked`. Many CLI agents (Codex, others) read `AGENTS.md`
-automatically if it's in the project. For **Claude Code** specifically, copy
-or symlink it to `CLAUDE.md`:
+`elementPicked`. It is the harness-neutral convention, and most CLI agents
+read it automatically when it sits in the project root.
+
+If your agent looks for a different filename, symlink it rather than copying,
+so the two can't drift apart:
 
 ```bash
-cp AGENTS.md CLAUDE.md
+ln -s AGENTS.md CLAUDE.md    # or whatever filename your harness expects
 ```
+
+`CLAUDE.md` ships as exactly that symlink. Point additional names at
+`AGENTS.md` the same way; there is only ever one file to edit.
 
 Without this, the agent has no framing for the file — it'll just see raw
 text with no idea it's a live capture from your browser.
