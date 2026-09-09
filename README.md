@@ -43,6 +43,21 @@ popup shows them all with a **×** to remove one, or "Remove all".
 A red dot next to a watcher means it is no longer useful — either its selector
 stopped matching, or it has gone quiet.
 
+### Which page a capture came from
+
+Several tabs can be watched at once, so every capture records the page it came
+from. A watcher runs in the page and cannot know its own tab, so the extension's
+service worker stamps it on the way through — the same place that knows when a
+tab closes.
+
+`list_watchpoints` groups by page and takes a `url` filter. Without this a
+capture from a background tab is indistinguishable from the tab you are looking
+at, and "read this page" has no referent.
+
+The protocol exposes a `PageRef` — url and title identify a page to a consumer;
+the numeric handle is opaque and valid only within one browser session, so
+nothing outside Chrome should reason about it.
+
 ### Watcher lifecycle
 
 Watchers run in the page, so nothing in the page can report its own death:
@@ -347,7 +362,7 @@ Watched elements are exposed as resources with subscriptions, so a harness is
 | `agent_eyes_get_surface` | normalized snapshot — check `completeness` |
 | `agent_eyes_list_actions` | discovered actions, filterable by `minConfidence` |
 | `agent_eyes_get_text` | raw extracted text |
-| `agent_eyes_list_watchpoints` | active watchpoints |
+| `agent_eyes_list_watchpoints` | active watchpoints, grouped by page; filter with `url` |
 | `agent_eyes_get_watchpoint` | one watchpoint's state |
 | `agent_eyes_save_snapshot` | persist the current surface under a name |
 | `agent_eyes_list_snapshots` | saved snapshots with their identity health |

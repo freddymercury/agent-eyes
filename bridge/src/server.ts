@@ -185,8 +185,30 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
 
   server.registerTool(
     "agent_eyes_list_watchpoints",
-    { title: "List watchpoints", description: "Elements currently being watched on the page." },
-    async () => json((await readWatchers()).map((w) => w.descriptor)),
+    {
+      title: "List watchpoints",
+      description:
+        "Elements currently being watched, grouped by the page they belong to. " +
+        "Several tabs can be watched at once, so a flat list is ambiguous — filter " +
+        "by url when you mean a specific page.",
+      inputSchema: { url: z.string().optional().describe("Only watchpoints whose page url contains this") },
+    },
+    async ({ url }: { url?: string }) => {
+      const all = await readWatchers();
+      const wanted = url ? all.filter((w) => (w.descriptor.page?.url ?? "").includes(url)) : all;
+      const byPage = new Map<string, typeof wanted>();
+      for (const w of wanted) {
+        const k = w.descriptor.page?.url ?? "(unknown page)";
+        byPage.set(k, [...(byPage.get(k) ?? []), w]);
+      }
+      return json({
+        pages: [...byPage.entries()].map(([pageUrl, ws]) => ({
+          url: pageUrl,
+          title: ws[0]?.descriptor.page?.title ?? null,
+          watchpoints: ws.map((w) => w.descriptor),
+        })),
+      });
+    },
   );
 
   server.registerTool(

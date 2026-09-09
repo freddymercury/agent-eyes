@@ -410,6 +410,9 @@ const server = http.createServer((req, res) => {
         const age = watcherAgeSeconds(w);
         live.push({
           watchId: w.watchId, label: w.label, selector: w.selector,
+          // Which tab this came from. Without it, several tabs' watchers are
+          // indistinguishable once they reach this directory.
+          tabId: w.tabId ?? null, tabUrl: w.tabUrl ?? w.url ?? null, tabTitle: w.tabTitle ?? null,
           capturedAt: w.capturedAt, chars: (w.text || "").length,
           ageSeconds: Math.round(age), stale: age > WATCH_STALE_SECONDS
         });

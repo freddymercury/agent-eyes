@@ -42,6 +42,9 @@ interface WatcherFile {
   removed?: boolean;
   role?: string;
   accessibleName?: string;
+  tabId?: number;
+  tabUrl?: string;
+  tabTitle?: string;
   expectation?: Expectation;
   observe?: ObserveMode[];
   hashes?: ObservedHashes;
@@ -91,6 +94,7 @@ export async function readWatchers(): Promise<Watcher[]> {
       descriptor: {
         id,
         name: d.label ?? id,
+        page: { handle: d.tabId, url: d.tabUrl ?? d.url, title: d.tabTitle ?? d.title },
         target: { selector: d.selector, role: d.role, accessibleName: d.accessibleName },
         observe: d.observe?.length ? d.observe : ["text"],
         expectation: d.expectation,

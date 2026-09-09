@@ -36,9 +36,25 @@ export const OBSERVE_MODES: ObserveMode[] = ["text", "structure", "attributes", 
  */
 export type Expectation = "changes" | "stable";
 
+/**
+ * Which browser page an observation came from.
+ *
+ * Deliberately not a Chrome tab id alone: the protocol must not leak Chrome
+ * concepts, so the url is what identifies a page to a consumer and the numeric
+ * id is an opaque handle for correlating captures within one session.
+ */
+export interface PageRef {
+  /** Opaque within a session; do not persist or reason about the number. */
+  handle?: number;
+  url?: string;
+  title?: string;
+}
+
 export interface WatchpointDescriptor {
   id: string;
   name: string;
+  /** The page this watchpoint lives on. */
+  page?: PageRef;
   target: {
     /** Structural path. Breaks when the page re-renders around it. */
     selector?: string;

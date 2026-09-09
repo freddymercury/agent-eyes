@@ -1319,6 +1319,7 @@ async function sendTelemetry_(tabId, clear) {
   if (!result || !result.installed) return { ok: false, error: "telemetry not installed on this tab" };
   const res = await postToBridge({
     kind: "telemetry",
+    tabId: tab.id,
     title: tab.title,
     url: tab.url,
     capturedAt: new Date().toISOString(),
@@ -1439,7 +1440,7 @@ async function scanSurface_(tabId) {
     func: scanSurface,
     args: [SCAN_MAX_NODES]
   });
-  const res = await postToBridge(result);
+  const res = await postToBridge({ ...result, tabId: tab.id, tabUrl: tab.url, tabTitle: tab.title });
   return { ok: res.ok, stats: result && result.stats };
 }
 
@@ -1534,7 +1535,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "agenteyes-watch-report") {
-    postToBridge(message.data || message.payload).then((r) => sendResponse(r));
+    // Stamp the tab here. A watcher runs in the page and cannot know which tab
+    // it belongs to, so without this every watcher lands in one directory with
+    // no record of origin — and a consumer cannot tell a background tab's
+    // capture from the one the user is looking at.
+    const payload = message.data || message.payload || {};
+    if (sender?.tab) {
+      payload.tabId = sender.tab.id;
+      payload.tabUrl = sender.tab.url;
+      payload.tabTitle = sender.tab.title;
+    }
+    postToBridge(payload).then((r) => sendResponse(r));
     return true;
   }
 

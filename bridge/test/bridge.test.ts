@@ -249,3 +249,45 @@ test("staleness comes from the server, not a second local threshold", async () =
     expect(["no_capture", "age", "tab_closed", undefined]).toContain(st.reason);
   }
 });
+
+test("watchpoints are grouped by the page they came from", async () => {
+  const { mkdir: mk, writeFile: wf, rm: rmf } = await import("node:fs/promises");
+  const wd = join(root, "watch");
+  await mk(wd, { recursive: true });
+  for (const f of ["wA_one.json", "wB_two.json", "wC_three.json"]) {
+    await rmf(join(wd, f)).catch(() => {});
+  }
+  const w = (id: string, label: string, tabId: number, tabUrl: string) =>
+    wf(
+      join(wd, `${id}_${label}.json`),
+      JSON.stringify({
+        watchId: id, label, tabId, tabUrl, tabTitle: `Tab ${tabId}`,
+        title: `Tab ${tabId}`, url: tabUrl, selector: "#x", alive: true,
+        text: "\n\t\nJ. Gibbs\nRB\nDet\nBye 6\n\t1\t1.3",
+        capturedAt: new Date().toISOString(),
+      }),
+    );
+  // Two tabs watched at once — the case a flat list cannot express.
+  await w("wA", "one", 11, "https://a.test/app");
+  await w("wB", "two", 11, "https://a.test/app");
+  await w("wC", "three", 22, "https://b.test/other");
+
+  const all = await client.callTool({ name: "agent_eyes_list_watchpoints", arguments: {} });
+  const grouped = JSON.parse((all.content as Array<{ text: string }>)[0]!.text);
+  expect(grouped.pages).toHaveLength(2);
+  const a = grouped.pages.find((p: { url: string }) => p.url === "https://a.test/app");
+  expect(a.watchpoints).toHaveLength(2);
+
+  const filtered = await client.callTool({
+    name: "agent_eyes_list_watchpoints",
+    arguments: { url: "b.test" },
+  });
+  const one = JSON.parse((filtered.content as Array<{ text: string }>)[0]!.text);
+  expect(one.pages).toHaveLength(1);
+  expect(one.pages[0].watchpoints[0].name).toBe("three");
+  expect(one.pages[0].watchpoints[0].page.handle).toBe(22);
+
+  for (const f of ["wA_one.json", "wB_two.json", "wC_three.json"]) {
+    await rmf(join(wd, f)).catch(() => {});
+  }
+});
