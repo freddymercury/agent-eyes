@@ -807,6 +807,62 @@ const WATCH_INTERVAL_MS = 5000;
 // hanging the tab. Reported in stats.truncated when hit.
 const SCAN_MAX_NODES = 20000;
 
+/**
+ * Save the current surface as a named snapshot.
+ *
+ * Scans first rather than reusing the last scan: a snapshot named for a release
+ * should describe the page as it is now, not whenever someone last pressed the
+ * scan shortcut.
+ */
+async function saveSnapshot_(tabId, name, release) {
+  const tab = await resolveTab(tabId);
+  if (!tab) return { ok: false };
+  const [{ result: scan }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: scanSurface,
+    args: [SCAN_MAX_NODES]
+  });
+  const actions = (scan && scan.actions) || [];
+  const rate = (n) => (actions.length ? Math.round((n / actions.length) * 1000) / 1000 : 0);
+  const meta = {
+    name,
+    url: scan.url,
+    title: scan.title,
+    completeness: "dom-actions",
+    health: {
+      actions: actions.length,
+      positionalRate: rate(actions.filter((a) => a.identityStrategy === "positional").length),
+      ordinalRate: rate(actions.filter((a) => a.ordinalDisambiguated).length),
+      lowConfidenceRate: rate(actions.filter((a) => a.confidence < 0.3).length),
+      truncated: !!(scan.stats && scan.stats.truncated)
+    },
+    release
+  };
+  const snapshot = {
+    schemaVersion: 1,
+    id: "surface-" + Date.now(),
+    context: { url: scan.url, title: scan.title, capturedAt: scan.capturedAt },
+    completeness: "dom-actions",
+    actions,
+    webmcpTools: [],
+    watchpoints: [],
+    scanStats: scan.stats
+  };
+  try {
+    const res = await fetch(BRIDGE_URL.replace("/context", "/snapshot"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meta, snapshot })
+    });
+    const body = await res.json();
+    flashBadge(res.ok ? "\u2713" : "!", res.ok ? "#4FD8C4" : "#E5484D");
+    return { ok: res.ok, meta: body.meta, health: meta.health };
+  } catch (err) {
+    flashBadge("!", "#E5484D");
+    return { ok: false, error: String(err) };
+  }
+}
+
 /** Inventory the page's interactive surface and send it to the bridge. */
 async function scanSurface_(tabId) {
   const tab = await resolveTab(tabId);
@@ -896,6 +952,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "agenteyes-popup-scan-surface") {
     scanSurface_().then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message?.type === "agenteyes-popup-save-snapshot") {
+    saveSnapshot_(null, message.name, message.release).then((r) => sendResponse(r));
     return true;
   }
 

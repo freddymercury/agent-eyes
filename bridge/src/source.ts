@@ -1,9 +1,12 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { snapshotHealth } from "@agent-eyes/protocol";
 import type {
   Action,
   ScanStats,
+  SnapshotMeta,
+  StoredSnapshot,
   SurfaceContext,
   SurfaceStaleness,
   WatchpointDescriptor,
@@ -16,6 +19,10 @@ export const AGENTEYES_DIR = process.env.AGENT_EYES_DIR ?? join(homedir(), ".age
 export const WATCH_DIR = join(AGENTEYES_DIR, "watch");
 export const CONTEXT_FILE = join(AGENTEYES_DIR, "context.json");
 export const SURFACE_FILE = join(AGENTEYES_DIR, "surface.json");
+export const SNAP_DIR = join(AGENTEYES_DIR, "snapshots");
+// Overridable alongside AGENT_EYES_DIR: with only the directory configurable,
+// a bridge pointed at a temp dir would still write through to the real store.
+export const SERVER_URL = process.env.AGENT_EYES_SERVER ?? "http://127.0.0.1:8765";
 
 /** Shape the extension POSTs and the server persists. */
 interface WatcherFile {
@@ -192,5 +199,85 @@ export async function readText(watchId?: string): Promise<string | null> {
     return ((await Bun.file(CONTEXT_FILE).json()) as WatcherFile).text ?? null;
   } catch {
     return null;
+  }
+}
+
+
+// --- snapshots ---------------------------------------------------------------
+
+export async function listSnapshots(): Promise<SnapshotMeta[]> {
+  let files: string[];
+  try {
+    files = (await readdir(SNAP_DIR)).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const out: SnapshotMeta[] = [];
+  for (const f of files) {
+    try {
+      out.push(((await Bun.file(join(SNAP_DIR, f)).json()) as StoredSnapshot).meta);
+    } catch {
+      // a half-written file should not break the listing
+    }
+  }
+  return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function readSnapshot(id: string): Promise<StoredSnapshot | null> {
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) return null;
+  try {
+    return (await Bun.file(join(SNAP_DIR, `${id}.json`)).json()) as StoredSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist the current surface.
+ *
+ * Goes through the server rather than writing the file directly, so id
+ * generation and the on-disk layout have exactly one owner.
+ */
+export async function saveSnapshot(
+  name: string,
+  release?: SnapshotMeta["release"],
+  notes?: string,
+): Promise<{ ok: boolean; meta?: SnapshotMeta; error?: string }> {
+  const [ctx, watchers, scan] = await Promise.all([readContext(), readWatchers(), readSurfaceScan()]);
+  if (!ctx) return { ok: false, error: "nothing captured yet — scan or watch a page first" };
+
+  const actions = scan?.actions ?? [];
+  const meta = {
+    name,
+    url: ctx.url,
+    title: ctx.title,
+    completeness: scan ? ("dom-actions" as const) : ("text-only" as const),
+    health: snapshotHealth(actions, scan?.stats.truncated ?? false),
+    release,
+    notes,
+  };
+  const snapshot = {
+    schemaVersion: 1 as const,
+    id: `surface-${Date.now()}`,
+    context: ctx,
+    completeness: meta.completeness,
+    actions,
+    webmcpTools: [],
+    watchpoints: watchers.map((w) => w.state),
+    text: (await readText()) ?? undefined,
+    scanStats: scan?.stats,
+  };
+
+  try {
+    const res = await fetch(`${SERVER_URL}/snapshot`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meta, snapshot }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await res.json()) as { ok: boolean; meta?: SnapshotMeta; error?: string };
+    return res.ok ? { ok: true, meta: body.meta } : { ok: false, error: body.error ?? `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: `cannot reach the AgentEyes server: ${(e as Error).message}` };
   }
 }

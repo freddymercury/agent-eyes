@@ -185,3 +185,47 @@ test("F2: completeness flips to dom-actions only once a scan exists", async () =
   expect(snap.actions.length).toBeGreaterThan(0);
   expect(snap.scanStats.nodesVisited).toBe(120);
 });
+
+test("F4: snapshots are listed and readable through the bridge", async () => {
+  const { mkdir: mk, writeFile: wf } = await import("node:fs/promises");
+  const snapDir = join(root, "snapshots");
+  await mk(snapDir, { recursive: true });
+  await wf(
+    join(snapDir, "snap-one.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      meta: {
+        id: "snap-one", name: "before release", createdAt: "2026-09-09T10:00:00Z",
+        url: "https://example.test/app", title: "App", completeness: "dom-actions",
+        health: { actions: 12, positionalRate: 0.05, ordinalRate: 0.1, lowConfidenceRate: 0, truncated: false },
+        release: { version: "1.4.0" },
+      },
+      snapshot: { schemaVersion: 1, id: "s", context: {}, completeness: "dom-actions", actions: [], webmcpTools: [], watchpoints: [] },
+    }),
+  );
+
+  const list = await client.callTool({ name: "agent_eyes_list_snapshots", arguments: {} });
+  const metas = JSON.parse((list.content as Array<{ text: string }>)[0]!.text);
+  expect(metas).toHaveLength(1);
+  expect(metas[0].name).toBe("before release");
+  expect(metas[0].release.version).toBe("1.4.0");
+
+  const one = await client.callTool({ name: "agent_eyes_get_snapshot", arguments: { id: "snap-one" } });
+  expect((one.content as Array<{ text: string }>)[0]!.text).toContain("before release");
+
+  const res = await client.readResource({ uri: "agenteyes://snapshots/snap-one" });
+  expect((res.contents[0] as { text: string }).text).toContain("dom-actions");
+});
+
+test("F4: a bad snapshot id is refused rather than traversing the filesystem", async () => {
+  const out = await client.callTool({ name: "agent_eyes_get_snapshot", arguments: { id: "../../context" } });
+  expect((out.content as Array<{ text: string }>)[0]!.text).toContain("no snapshot");
+});
+
+test("F4: comparability warnings surface through the bridge", async () => {
+  const out = await client.callTool({
+    name: "agent_eyes_check_comparable",
+    arguments: { a: "snap-one", b: "missing" },
+  });
+  expect((out.content as Array<{ text: string }>)[0]!.text).toContain("no snapshot");
+});

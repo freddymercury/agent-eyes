@@ -6,7 +6,10 @@ import {
 import { z } from "zod";
 import {
   DEFAULT_BRIDGE_CONFIG,
+  comparabilityWarnings,
+  snapshotUri,
   URI_ACTIONS,
+  URI_SNAPSHOTS,
   URI_CONTEXT,
   URI_WATCH_LIST,
   watchUri,
@@ -16,7 +19,10 @@ import {
 import {
   readContext,
   readStaleness,
+  listSnapshots,
+  readSnapshot,
   readSurfaceScan,
+  saveSnapshot,
   readText,
   readWatchers,
   type Watcher,
@@ -117,6 +123,43 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
         },
       ],
     }),
+  );
+
+  server.registerResource(
+    "snapshots",
+    URI_SNAPSHOTS,
+    { title: "Saved surface snapshots", mimeType: "application/json" },
+    async (uri) => ({
+      contents: [
+        { uri: uri.href, mimeType: "application/json", text: JSON.stringify(await listSnapshots(), null, 2) },
+      ],
+    }),
+  );
+
+  server.registerResource(
+    "snapshot",
+    new ResourceTemplate("agenteyes://snapshots/{id}", {
+      list: async () => ({
+        resources: (await listSnapshots()).map((m) => ({
+          uri: snapshotUri(m.id),
+          name: `${m.name} (${m.createdAt.slice(0, 16)})`,
+          mimeType: "application/json",
+        })),
+      }),
+    }),
+    { title: "Saved snapshot", mimeType: "application/json" },
+    async (uri, vars) => {
+      const snap = await readSnapshot(String(vars.id));
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(snap ?? { error: `no snapshot ${vars.id}` }, null, 2),
+          },
+        ],
+      };
+    },
   );
 
   // --- tools ----------------------------------------------------------------
@@ -227,6 +270,77 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
         scanStats: scan?.stats,
       };
       return json(snapshot);
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_save_snapshot",
+    {
+      title: "Save a surface snapshot",
+      description:
+        "Persist the current surface under a name, with release metadata. Records " +
+        "identity health alongside it so a later comparison can tell whether it is " +
+        "trustworthy. Writes only to Agent Eyes' own store — it does not act on the page.",
+      inputSchema: {
+        name: z.string().describe("A name for this snapshot"),
+        version: z.string().optional().describe("Release version, if known"),
+        commitSha: z.string().optional(),
+        environment: z.string().optional().describe("local, dev, staging, production"),
+        notes: z.string().optional(),
+      },
+    },
+    async ({
+      name,
+      version,
+      commitSha,
+      environment,
+      notes,
+    }: {
+      name: string;
+      version?: string;
+      commitSha?: string;
+      environment?: string;
+      notes?: string;
+    }) => {
+      const r = await saveSnapshot(name, { version, commitSha, environment }, notes);
+      return json(r.ok ? { saved: r.meta } : { error: r.error });
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_list_snapshots",
+    { title: "List saved snapshots", description: "Every saved snapshot, newest first, with its identity health." },
+    async () => json(await listSnapshots()),
+  );
+
+  server.registerTool(
+    "agent_eyes_get_snapshot",
+    {
+      title: "Get a saved snapshot",
+      description: "Read one snapshot in full by id.",
+      inputSchema: { id: z.string().describe("Snapshot id, from list_snapshots") },
+    },
+    async ({ id }: { id: string }) => {
+      const snap = await readSnapshot(id);
+      return snap ? json(snap) : json({ error: `no snapshot ${id}` });
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_check_comparable",
+    {
+      title: "Check two snapshots can be compared",
+      description:
+        "Report why two snapshots may not be meaningfully comparable — different pages, " +
+        "different completeness, or sharply different identity quality. Returns warnings " +
+        "rather than a verdict, so they can be shown rather than silently acted on.",
+      inputSchema: { a: z.string(), b: z.string() },
+    },
+    async ({ a, b }: { a: string; b: string }) => {
+      const [x, y] = await Promise.all([readSnapshot(a), readSnapshot(b)]);
+      if (!x || !y) return json({ error: `no snapshot ${!x ? a : b}` });
+      const warnings = comparabilityWarnings(x.meta, y.meta);
+      return json({ comparable: warnings.length === 0, warnings });
     },
   );
 

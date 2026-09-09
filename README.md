@@ -173,6 +173,35 @@ the easy case and will flatter the identity function.** A real corpus means
 scans captured from an actual application across actual releases, which is the
 only thing that can tell a good identity function from a bad one.
 
+### Saving snapshots
+
+**Save a snapshot…** in the popup names the current surface and stores it. It
+rescans first, so a snapshot named for a release describes the page now rather
+than whenever someone last pressed the scan shortcut.
+
+Snapshots live on disk at `~/.agenteyes/snapshots/`, not in the extension's
+IndexedDB. The consumer that needs them most is the Agent Bridge — a separate
+process that already reads this directory — and disk makes export, backup and
+version control free.
+
+Each snapshot records **identity health** alongside the actions:
+
+```json
+{ "actions": 326, "positionalRate": 0.025, "ordinalRate": 0.859,
+  "lowConfidenceRate": 0.586, "truncated": false }
+```
+
+That matters because a comparison is only meaningful between snapshots of
+similar quality. Diffing a page where 86% of ids depend on document order
+against one where 5% do produces noise, and `agent_eyes_check_comparable`
+reports why rather than returning a verdict:
+
+```
+different completeness: text-only vs dom-actions
+ordinal-dependent rate differs sharply: 5% vs 86%
+a scan was truncated; its inventory is partial
+```
+
 ### Resources
 
 Watched elements are exposed as resources with subscriptions, so a harness is
@@ -184,6 +213,8 @@ Watched elements are exposed as resources with subscriptions, so a harness is
 | `agenteyes://watch` | list of active watchpoints |
 | `agenteyes://watch/{id}` | one watchpoint's text and freshness |
 | `agenteyes://actions` | the most recent interactive-surface scan |
+| `agenteyes://snapshots` | saved snapshots, newest first |
+| `agenteyes://snapshots/{id}` | one saved snapshot in full |
 
 ### Tools
 
@@ -195,6 +226,10 @@ Watched elements are exposed as resources with subscriptions, so a harness is
 | `agent_eyes_get_text` | raw extracted text |
 | `agent_eyes_list_watchpoints` | active watchpoints |
 | `agent_eyes_get_watchpoint` | one watchpoint's state |
+| `agent_eyes_save_snapshot` | persist the current surface under a name |
+| `agent_eyes_list_snapshots` | saved snapshots with their identity health |
+| `agent_eyes_get_snapshot` | one snapshot by id |
+| `agent_eyes_check_comparable` | why two snapshots may not be comparable |
 | `agent_eyes_get_staleness` | how old the observation is, and whether to trust it |
 
 `get_surface` reports `completeness: "text-only"` until a scan has been taken,
@@ -210,6 +245,7 @@ when no scan exists, for the same reason.
 | `AGENT_EYES_MODE` | `read` | `readwrite` enables the write plane (not implemented yet) |
 | `AGENT_EYES_STALE_AFTER` | `30` | seconds before an observation is reported stale |
 | `AGENT_EYES_DIR` | `~/.agenteyes` | capture directory; override to run instances side by side |
+| `AGENT_EYES_SERVER` | `http://127.0.0.1:8765` | server the bridge writes snapshots through |
 
 In `read` mode write tools are **absent** from the tool list rather than present
 and failing — an agent should not be offered a capability it cannot use.

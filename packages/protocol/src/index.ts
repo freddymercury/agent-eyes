@@ -156,6 +156,84 @@ export interface SurfaceSnapshot {
   scanStats?: ScanStats;
 }
 
+/**
+ * How trustworthy a snapshot's identity is.
+ *
+ * Stored with every snapshot because a comparison is only meaningful between
+ * snapshots of similar quality. Diffing a page that was 85% ordinal-dependent
+ * against one that was 5% produces noise, and F5 needs to be able to say so
+ * rather than presenting the result as fact.
+ */
+export interface SnapshotHealth {
+  actions: number;
+  /** Share 0-1 whose ids fall back to DOM position. */
+  positionalRate: number;
+  /** Share 0-1 needing an ordinal, whatever their strategy. */
+  ordinalRate: number;
+  /** Share 0-1 detected only from cursor styling. */
+  lowConfidenceRate: number;
+  /** True when the node budget stopped the scan early. */
+  truncated: boolean;
+}
+
+export interface SnapshotMeta {
+  id: string;
+  /** Human-chosen name. Not unique; the id is. */
+  name: string;
+  createdAt: string;
+  url: string;
+  title: string;
+  completeness: SurfaceCompleteness;
+  health: SnapshotHealth;
+  release?: { version?: string; commitSha?: string; buildId?: string; environment?: string };
+  notes?: string;
+}
+
+export interface StoredSnapshot {
+  schemaVersion: 1;
+  meta: SnapshotMeta;
+  snapshot: SurfaceSnapshot;
+}
+
+/** Derive the health summary from a snapshot's actions. */
+export function snapshotHealth(actions: Action[], truncated = false): SnapshotHealth {
+  const n = actions.length;
+  const rate = (k: number) => (n ? Math.round((k / n) * 1000) / 1000 : 0);
+  return {
+    actions: n,
+    positionalRate: rate(actions.filter((a) => a.identityStrategy === "positional").length),
+    ordinalRate: rate(actions.filter((a) => a.ordinalDisambiguated).length),
+    lowConfidenceRate: rate(actions.filter((a) => a.confidence < 0.3).length),
+    truncated,
+  };
+}
+
+/**
+ * Whether two snapshots can be meaningfully compared.
+ *
+ * Returns the reasons they cannot, rather than a boolean, so a caller can show
+ * them instead of silently proceeding.
+ */
+export function comparabilityWarnings(a: SnapshotMeta, b: SnapshotMeta): string[] {
+  const w: string[] = [];
+  if (a.completeness !== b.completeness) {
+    w.push(`different completeness: ${a.completeness} vs ${b.completeness}`);
+  }
+  if (a.url !== b.url) w.push(`different url: ${a.url} vs ${b.url}`);
+  for (const [label, key] of [
+    ["positional", "positionalRate"],
+    ["ordinal-dependent", "ordinalRate"],
+  ] as const) {
+    const x = a.health[key];
+    const y = b.health[key];
+    if (Math.max(x, y) > 0.25 && Math.abs(x - y) > 0.15) {
+      w.push(`${label} rate differs sharply: ${(x * 100).toFixed(0)}% vs ${(y * 100).toFixed(0)}%`);
+    }
+  }
+  if (a.health.truncated || b.health.truncated) w.push("a scan was truncated; its inventory is partial");
+  return w;
+}
+
 export type CapabilityMode = "read" | "readwrite";
 
 export interface BridgeConfig {
@@ -176,6 +254,8 @@ export const DEFAULT_BRIDGE_CONFIG: BridgeConfig = {
 
 export const URI_CONTEXT = "agenteyes://context";
 export const URI_ACTIONS = "agenteyes://actions";
+export const URI_SNAPSHOTS = "agenteyes://snapshots";
+export const snapshotUri = (id: string) => `agenteyes://snapshots/${id}`;
 export const URI_WATCH_LIST = "agenteyes://watch";
 export const watchUri = (id: string) => `agenteyes://watch/${id}`;
 export const parseWatchUri = (uri: string): string | null =>

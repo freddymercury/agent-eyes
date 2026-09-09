@@ -39,6 +39,31 @@ document.getElementById("scan-surface").addEventListener("click", async () => {
   setStatus(`${s.actionsFound} actions, ${s.durationMs}ms${s.truncated ? " (truncated)" : ""}`, "ok");
 });
 
+document.getElementById("save-snapshot").addEventListener("click", async () => {
+  const name = window.prompt("Name this snapshot:", document.title || "snapshot");
+  if (!name) return;
+  const version = window.prompt("Release version (optional):", "") || undefined;
+  setStatus("scanning and saving\u2026");
+  const res = await chrome.runtime.sendMessage({
+    type: "agenteyes-popup-save-snapshot",
+    name,
+    release: version ? { version } : undefined
+  });
+  if (!res?.ok) {
+    setStatus("failed — is the server running?", "err");
+    return;
+  }
+  const h = res.health || {};
+  // Surface the qualities that decide whether a later diff is trustworthy,
+  // while the user can still do something about it.
+  const warn = h.positionalRate > 0.25 || h.ordinalRate > 0.3 || h.truncated;
+  setStatus(
+    `saved · ${h.actions} actions` +
+      (warn ? ` · unstable ids ${Math.round((h.ordinalRate || 0) * 100)}%` : ""),
+    warn ? "" : "ok"
+  );
+});
+
 function renderWatchers(watchers) {
   const box = document.getElementById("watchers");
   const clear = document.getElementById("clear");
