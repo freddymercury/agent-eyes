@@ -15,6 +15,10 @@ const path = require("path");
 const os = require("os");
 
 const PORT = 8765;
+// Loopback only. listen(PORT) with no host binds every interface, which put
+// every capture and snapshot on the local network — readable, writable and
+// deletable by anyone sharing the wifi.
+const HOST = process.env.AGENT_EYES_HOST || "127.0.0.1";
 const DIR = path.join(os.homedir(), ".agenteyes");
 const JSON_FILE = path.join(DIR, "context.json");
 const MD_FILE = path.join(DIR, "context.md");
@@ -144,12 +148,30 @@ function writeFiles(data) {
   fs.writeFileSync(path.join(CAPTURES_DIR, filename), md, "utf8");
 }
 
+/**
+ * Only the extension may read cross-origin.
+ *
+ * "*" let any website the user visited read their captures from JavaScript:
+ * browse to a hostile page while the last capture was a mailbox or an internal
+ * tool, and its contents were one fetch away. Requests without an Origin —
+ * curl, the bridge, anything server-side — are unaffected, since CORS only
+ * governs browsers.
+ */
+function allowedOrigin(origin) {
+  if (!origin) return null;
+  if (origin.startsWith("chrome-extension://")) return origin;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+  return null;
+}
+
 function send(res, status, body, contentType = "application/json") {
+  // Read the origin off the response's own request rather than threading it
+  // through every call site — or worse, stashing it in a shared variable,
+  // which would race between concurrent requests.
+  const allow = allowedOrigin(res.req && res.req.headers ? res.req.headers.origin : null);
   res.writeHead(status, {
     "Content-Type": contentType,
-    // Extension background pages send fetches with an origin the server
-    // should just accept — this is a single-user localhost tool.
-    "Access-Control-Allow-Origin": "*",
+    ...(allow ? { "Access-Control-Allow-Origin": allow, Vary: "Origin" } : {}),
     // DELETE matters: the popup's delete button issues one, and a browser
     // fails the preflight if it is not advertised here. curl does not enforce
     // CORS, so this only breaks in the UI.
@@ -310,8 +332,8 @@ const server = http.createServer((req, res) => {
   send(res, 404, JSON.stringify({ ok: false, error: "not found" }));
 });
 
-server.listen(PORT, () => {
-  console.log(`[agenteyes] listening on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[agenteyes] listening on http://${HOST}:${PORT} (loopback only)`);
   console.log(`[agenteyes] writing to ${JSON_FILE}`);
   console.log(`[agenteyes] history in ${CAPTURES_DIR}`);
   console.log(`[agenteyes] watchers in ${WATCH_DIR}`);

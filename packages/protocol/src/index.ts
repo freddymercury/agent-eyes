@@ -21,12 +21,90 @@ export interface SurfaceContext {
   principal?: { authState: "anonymous" | "authenticated" | "unknown" };
 }
 
+/** What aspect of an element a watchpoint is looking at. */
+export type ObserveMode = "text" | "structure" | "attributes" | "state";
+
+export const OBSERVE_MODES: ObserveMode[] = ["text", "structure", "attributes", "state"];
+
+/**
+ * What the watchpoint asserts.
+ *
+ * `changes` — this must move when the action under test runs. An effect that
+ *   did not happen is the usual bug.
+ * `stable`  — this must NOT move. Catches the change nobody asked for, which is
+ *   the kind a test suite normally misses entirely.
+ */
+export type Expectation = "changes" | "stable";
+
 export interface WatchpointDescriptor {
   id: string;
   name: string;
-  target: { selector?: string };
-  observe: Array<"text">;
-  expectation?: "changes" | "stable";
+  target: {
+    /** Structural path. Breaks when the page re-renders around it. */
+    selector?: string;
+    /** Semantic target, which survives re-wrapping. */
+    role?: string;
+    accessibleName?: string;
+  };
+  observe: ObserveMode[];
+  expectation?: Expectation;
+}
+
+/** One hash per observed aspect, so a report can say *what* moved. */
+export type ObservedHashes = Partial<Record<ObserveMode, string>>;
+
+export type WatchpointVerdict = "met" | "violated" | "unknown";
+
+export interface WatchpointEvaluation {
+  watchpointId: string;
+  name: string;
+  expectation?: Expectation;
+  verdict: WatchpointVerdict;
+  /** Which observed aspects differ from the baseline. */
+  changed: ObserveMode[];
+  /** Plain-language reason, for reports. */
+  reason: string;
+}
+
+/**
+ * Judge one watchpoint against its baseline.
+ *
+ * A watchpoint with no expectation is never a failure — it is being observed,
+ * not asserted — so it reports `unknown` with what moved, rather than being
+ * silently dropped.
+ */
+export function evaluateWatchpoint(
+  d: WatchpointDescriptor,
+  baseline: ObservedHashes | undefined,
+  current: ObservedHashes,
+  alive: boolean,
+): WatchpointEvaluation {
+  const changed = (d.observe ?? []).filter((m) => baseline?.[m] !== undefined && baseline[m] !== current[m]);
+  const base = { watchpointId: d.id, name: d.name, expectation: d.expectation, changed };
+
+  if (!alive) {
+    // The element is gone. For `stable` that is unambiguously a violation; for
+    // `changes` it is not obviously either, so do not guess.
+    return d.expectation === "stable"
+      ? { ...base, verdict: "violated", reason: "the watched element no longer exists" }
+      : { ...base, verdict: "unknown", reason: "the watched element no longer exists" };
+  }
+  if (!baseline) return { ...base, verdict: "unknown", reason: "no baseline recorded yet" };
+  if (!d.expectation) {
+    return {
+      ...base,
+      verdict: "unknown",
+      reason: changed.length ? `observed a change in ${changed.join(", ")}` : "no change observed",
+    };
+  }
+  if (d.expectation === "changes") {
+    return changed.length
+      ? { ...base, verdict: "met", reason: `changed as expected: ${changed.join(", ")}` }
+      : { ...base, verdict: "violated", reason: "expected a change, nothing moved" };
+  }
+  return changed.length
+    ? { ...base, verdict: "violated", reason: `expected no change, but ${changed.join(", ")} moved` }
+    : { ...base, verdict: "met", reason: "unchanged as expected" };
 }
 
 export interface WatchpointState {
@@ -36,6 +114,8 @@ export interface WatchpointState {
    * for two different guarantees; see docs/fingerprint-options.md.
    */
   contentHash: string;
+  /** Per-aspect hashes, so a report can say which aspect moved. */
+  hashes?: ObservedHashes;
   text: string;
   capturedAt: string;
   ageSeconds: number;
