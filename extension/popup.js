@@ -55,6 +55,7 @@ document.getElementById("save-snapshot").addEventListener("click", async () => {
     return;
   }
   showSaved(res);
+  renderSnapshots();
   const h = res.health || {};
   // Surface the qualities that decide whether a later diff is trustworthy,
   // while the user can still do something about it.
@@ -65,6 +66,72 @@ document.getElementById("save-snapshot").addEventListener("click", async () => {
     warn ? "" : "ok"
   );
 });
+
+const SERVER = "http://localhost:8765";
+
+async function renderSnapshots() {
+  const box = document.getElementById("snapshots");
+  let snaps = [];
+  try {
+    const res = await fetch(`${SERVER}/snapshots`);
+    snaps = (await res.json()).snapshots || [];
+  } catch (err) {
+    box.innerHTML = '<div class="empty">server not running</div>';
+    return;
+  }
+  box.innerHTML = "";
+  if (!snaps.length) {
+    box.innerHTML = '<div class="empty">none yet</div>';
+    return;
+  }
+  for (const s of snaps) {
+    const row = document.createElement("div");
+    row.className = "snap";
+
+    const col = document.createElement("div");
+    col.className = "col";
+    const nm = document.createElement("div");
+    nm.className = "nm";
+    nm.textContent = s.name;
+    nm.title = `${s.url}\n${s.createdAt}`;
+    col.appendChild(nm);
+
+    const sub = document.createElement("div");
+    sub.className = "sub";
+    const h = s.health || {};
+    const ord = Math.round((h.ordinalRate || 0) * 100);
+    const pos = Math.round((h.positionalRate || 0) * 100);
+    sub.textContent = `${h.actions} actions · `;
+    const q = document.createElement("span");
+    // Flag the qualities that decide whether a later diff means anything.
+    const shaky = ord > 30 || pos > 25 || h.truncated;
+    if (shaky) q.className = "bad";
+    q.textContent = `${ord}% unstable ids` + (h.truncated ? " · truncated" : "");
+    sub.appendChild(q);
+    col.appendChild(sub);
+    row.appendChild(col);
+
+    const open = document.createElement("button");
+    open.textContent = "open";
+    open.title = "open the saved JSON";
+    open.addEventListener("click", () => chrome.tabs.create({ url: `${SERVER}/snapshot/${s.id}` }));
+    row.appendChild(open);
+
+    const del = document.createElement("button");
+    del.className = "x";
+    del.textContent = "\u00d7";
+    del.title = "move to trash";
+    del.addEventListener("click", async () => {
+      await fetch(`${SERVER}/snapshot/${s.id}`, { method: "DELETE" });
+      // Deletes are recoverable from .trash, so no confirmation prompt.
+      setStatus("moved to trash", "");
+      renderSnapshots();
+    });
+    row.appendChild(del);
+
+    box.appendChild(row);
+  }
+}
 
 function showSaved(res) {
   const box = document.getElementById("saved");
@@ -140,4 +207,5 @@ document.getElementById("clear").addEventListener("click", async () => {
 (async () => {
   const res = await chrome.runtime.sendMessage({ type: "agenteyes-popup-list-watch" });
   renderWatchers(res && res.watchers);
+  renderSnapshots();
 })();

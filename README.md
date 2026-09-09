@@ -202,6 +202,11 @@ ordinal-dependent rate differs sharply: 5% vs 86%
 a scan was truncated; its inventory is partial
 ```
 
+The popup lists saved snapshots with their action count and unstable-id share,
+highlighted when a snapshot is shaky enough that a later diff would be
+unreliable. **open** shows the saved JSON; **×** moves it to `.trash`, which is
+recoverable, so there is no confirmation prompt.
+
 ### Resources
 
 Watched elements are exposed as resources with subscriptions, so a harness is

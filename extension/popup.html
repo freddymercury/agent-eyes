@@ -55,6 +55,21 @@
     font-size:10.5px; padding:5px 8px; color:var(--text-muted);
     justify-content:center; margin-top:2px;
   }
+  .snap{
+    display:flex; align-items:center; gap:8px; background:var(--raised);
+    border:1px solid var(--border); border-radius:6px; padding:6px 8px;
+    margin-bottom:5px; font-size:11.5px;
+  }
+  .snap .col{flex:1; min-width:0;}
+  .snap .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .snap .sub{font-family:monospace; font-size:9px; color:var(--text-muted); margin-top:1px;}
+  .snap .sub .bad{color:#F5A623;}
+  .snap button{
+    background:none; border:none; color:var(--text-muted); cursor:pointer;
+    font-size:11px; padding:0 2px; width:auto; margin:0; line-height:1;
+  }
+  .snap button:hover{color:var(--sense); background:none;}
+  .snap button.x:hover{color:#E5484D;}
   #saved{
     display:none; margin-top:8px; padding:7px 8px; background:var(--raised);
     border:1px solid var(--sense-dim); border-radius:6px;
@@ -97,6 +112,8 @@
     <span class="ic">&#9635;</span>
     <span class="label">Save a snapshot&hellip;<span class="k">names the current surface</span></span>
   </button>
+  <div class="sec">Saved snapshots</div>
+  <div id="snapshots"><div class="empty">none yet</div></div>
   <div class="sec">Active watchers</div>
   <div id="watchers"><div class="empty">none yet</div></div>
   <button id="clear" style="display:none">Remove all</button>

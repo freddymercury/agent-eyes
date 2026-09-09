@@ -150,7 +150,10 @@ function send(res, status, body, contentType = "application/json") {
     // Extension background pages send fetches with an origin the server
     // should just accept — this is a single-user localhost tool.
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    // DELETE matters: the popup's delete button issues one, and a browser
+    // fails the preflight if it is not advertised here. curl does not enforce
+    // CORS, so this only breaks in the UI.
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type"
   });
   res.end(body);
