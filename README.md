@@ -135,6 +135,31 @@ silently trusted.
 Same-origin iframes are skipped and counted rather than silently omitted. Scans
 stop after 20,000 nodes and report `truncated: true` instead of hanging the tab.
 
+### Ranking
+
+Each action also records the **landmark** it sits in and a **prominence** score,
+and `list_actions` returns the most prominent first.
+
+This is separate from confidence on purpose. Confidence answers *is this
+interactive*; a footer link unambiguously is, and keeps a high score. Prominence
+answers *does this matter here*. Without it, a scan of a GitHub repository page
+answered "Skip to content, Terms, Privacy, Security, Status, Community, Docs" —
+correct, and useless. With it: the repository name, Fork, star, Code, Readme.
+
+| landmark | weight |
+|---|--:|
+| `main` | 1.0 |
+| `region` / `form` / `search` | 0.9 |
+| no landmark declared | 0.7 |
+| `navigation` | 0.5 |
+| `banner` | 0.4 |
+| `complementary` | 0.3 |
+| `contentinfo` | 0.1 |
+
+The landmark reported is the innermost one, but the weight comes from the least
+prominent on the chain — a `region` inside a footer is still in the footer.
+Generic labels ("Learn more", "Terms") are demoted wherever they appear.
+
 ### Action identity
 
 Each action carries an id derived from semantics, never from CSS classes.

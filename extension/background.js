@@ -286,6 +286,56 @@ function scanSurface(maxNodes) {
     return "";
   }
 
+  const LANDMARK_WEIGHT = {
+    main: 1.0, search: 0.9, form: 0.9, region: 0.9,
+    navigation: 0.5, banner: 0.4, complementary: 0.3, contentinfo: 0.1
+  };
+
+  /**
+   * Where the page says this element lives.
+   *
+   * Reports the *innermost* landmark, which is the specific answer — a link in
+   * a <nav> inside a <header> is in navigation, not merely in the banner.
+   *
+   * Weight, though, is the *least* prominent landmark on the chain: a region
+   * inside a footer is still in the footer, and taking the innermost weight
+   * alone would promote it to 0.9.
+   */
+  function landmarkOf(el) {
+    let innermost = "";
+    let weight = null;
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const r = roleOf(n);
+      if (r in LANDMARK_WEIGHT) {
+        if (!innermost) innermost = r;
+        weight = weight === null ? LANDMARK_WEIGHT[r] : Math.min(weight, LANDMARK_WEIGHT[r]);
+      }
+    }
+    return { landmark: innermost, weight };
+  }
+
+  // Labels that carry no task-specific meaning wherever they appear.
+  const GENERIC_LABELS = new Set([
+    "learn more", "click here", "read more", "more", "home", "terms", "privacy",
+    "contact", "about", "help", "docs", "support", "status", "security",
+    "cookie policy", "manage cookies", "skip to content", "sign in", "log in"
+  ]);
+
+  /**
+   * How structurally prominent an action is. Deliberately separate from
+   * confidence, which answers whether something is interactive — a footer link
+   * genuinely is, and should keep its high confidence while ranking low.
+   */
+  function prominenceOf(el, name, kind) {
+    const { landmark, weight } = landmarkOf(el);
+    // No landmark sits between navigation and region: most pages do not mark up
+    // their main content, and assuming the worst would bury everything.
+    let score = weight === null ? 0.7 : weight;
+    if (GENERIC_LABELS.has(name)) score *= 0.35;
+    if (kind === "submit" || kind === "input") score *= 1.15;
+    return { landmark, prominence: Math.min(1, Math.round(score * 100) / 100) };
+  }
+
   function testIdOf(el) {
     for (const a of ["data-testid", "data-test-id", "data-test", "data-cy", "data-qa"]) {
       const v = el.getAttribute(a);
@@ -489,6 +539,7 @@ function scanSurface(maxNodes) {
         const path = roleAncestorPath(node);
 
         const container = containerName(node);
+        const prom = prominenceOf(node, name, c.kind);
         let identityStrategy;
         let identityKey;
         if (testId) {
@@ -527,6 +578,8 @@ function scanSurface(maxNodes) {
           id: shortHash(withOrdinal),
           identityStrategy,
           ordinalDisambiguated,
+          landmark: prom.landmark || undefined,
+          prominence: prom.prominence,
           identityKey: withOrdinal,
           label: accessibleName(node) || node.tagName.toLowerCase(),
           kind: c.kind,

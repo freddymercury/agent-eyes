@@ -222,9 +222,22 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
         "Ids are positional and not stable across page loads.",
       inputSchema: {
         minConfidence: z.number().optional().describe("Filter out weaker detections, 0-1"),
+        order: z
+          .enum(["prominence", "document"])
+          .optional()
+          .describe("prominence (default) puts the page's own controls first; document is source order"),
+        limit: z.number().optional().describe("Return only the first N"),
       },
     },
-    async ({ minConfidence }: { minConfidence?: number }) => {
+    async ({
+      minConfidence,
+      order,
+      limit,
+    }: {
+      minConfidence?: number;
+      order?: "prominence" | "document";
+      limit?: number;
+    }) => {
       const scan = await readSurfaceScan();
       if (!scan) {
         return json({
@@ -233,11 +246,20 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
         });
       }
       const min = minConfidence ?? 0;
+      let actions = scan.actions.filter((a) => a.confidence >= min);
+      // Default to prominence: an agent asking an open question should see the
+      // page's own controls, not whatever the document happens to list first —
+      // which on most sites is the header and footer.
+      if ((order ?? "prominence") === "prominence") {
+        actions = [...actions].sort((a, b) => (b.prominence ?? 0.7) - (a.prominence ?? 0.7));
+      }
+      if (limit && limit > 0) actions = actions.slice(0, limit);
       return json({
         capturedAt: scan.capturedAt,
         ageSeconds: scan.ageSeconds,
         stats: scan.stats,
-        actions: scan.actions.filter((a) => a.confidence >= min),
+        order: order ?? "prominence",
+        actions,
       });
     },
   );

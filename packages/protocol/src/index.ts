@@ -117,8 +117,18 @@ export interface Action {
   evidence: ActionEvidence;
   domExposure: DomExposure;
   enabled?: boolean;
-  /** 0-1, derived from the evidence combination. */
+  /** 0-1, derived from the evidence combination: is this interactive? */
   confidence: number;
+  /** The outermost landmark this action sits in, if the page declares one. */
+  landmark?: string;
+  /**
+   * 0-1 structural importance: does this matter on this page?
+   *
+   * Separate from confidence on purpose. A footer link is unambiguously
+   * interactive and unambiguously not the point of the page, and collapsing
+   * both into one number makes each harder to reason about.
+   */
+  prominence?: number;
 }
 
 /** Reported alongside a scan so slow pages are visible rather than mysterious. */
