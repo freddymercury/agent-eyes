@@ -38,6 +38,7 @@ function report(path: string, s: Scan) {
   const dupes = [...byKey.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]);
   const inDupes = dupes.reduce((acc, [, c]) => acc + c, 0);
 
+  const ordinal = s.actions.filter((a) => a.ordinalDisambiguated).length;
   const unnamed = s.actions.filter((a) => !a.domExposure.accessibleName).length;
   const lowConf = s.actions.filter((a) => a.confidence < 0.3).length;
 
@@ -59,6 +60,10 @@ function report(path: string, s: Scan) {
       `semantic ${pct(strat.semantic, n)}  ` +
       `positional ${pct(strat.positional, n)}` +
       (strat.positional / (n || 1) > 0.25 ? "   <-- weak: >25% will churn" : ""),
+  );
+  console.log(
+    `   ordinal-dep      ${ordinal} (${pct(ordinal, n)}) — position-dependent whatever the strategy` +
+      (ordinal / (n || 1) > 0.3 ? "   <-- fragile in a reordering list" : ""),
   );
   console.log(`   unnamed          ${unnamed} (${pct(unnamed, n)}) — no accessible name to anchor to`);
   console.log(`   low confidence   ${lowConf} (${pct(lowConf, n)}) — cursor-only detections`);

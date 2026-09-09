@@ -126,3 +126,23 @@ test("accented characters are preserved, not stripped", () => {
   expect(a.identityKey).toContain("café");
   expect(a.id).not.toBe(b.id);
 });
+
+test("long labels sharing a prefix do not collide", () => {
+  // Commit lists, article titles and file paths routinely share their first
+  // 60 characters; truncating alone merges them and hands the work to ordinals.
+  const a = "Discover the page's interactive surface and add a scanner that inventories controls";
+  const b = "Discover the page's interactive surface and add a scanner that skips iframes";
+  const scan = render(`<main><a href="/1">${a}</a><a href="/2">${b}</a></main>`);
+  expect(scan.actions).toHaveLength(2);
+  const [x, y] = scan.actions;
+  expect(x.id).not.toBe(y.id);
+  // and neither should have needed an ordinal to be distinguished
+  expect(x.ordinalDisambiguated).toBe(false);
+  expect(y.ordinalDisambiguated).toBe(false);
+});
+
+test("identical long labels still collapse to an ordinal, as they should", () => {
+  const long = "A repeated label that is definitely longer than the sixty character bound";
+  const scan = render(`<main><a href="/1">${long}</a><a href="/2">${long}</a></main>`);
+  expect(scan.actions[1].ordinalDisambiguated).toBe(true);
+});

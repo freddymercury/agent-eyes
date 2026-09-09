@@ -104,6 +104,12 @@ export interface Action {
   /** Hash of `identityKey`. Stability depends on `identityStrategy`. */
   id: string;
   identityStrategy: IdentityStrategy;
+  /**
+   * True when an ordinal was needed to tell this apart from a sibling with the
+   * same key. Such ids depend on document order and churn when a list
+   * reorders — regardless of which strategy produced them.
+   */
+  ordinalDisambiguated?: boolean;
   /** The human-readable input the id was hashed from, for debugging churn. */
   identityKey: string;
   label: string;

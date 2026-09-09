@@ -207,8 +207,20 @@ function scanSurface(maxNodes) {
       // non-English UI, sending the whole page to positional identity, and
       // mangles accented Latin ("Café" -> "caf").
       .replace(/[^\p{L}\p{N}'\- ]/gu, "")
-      .trim()
-      .slice(0, 60);
+      .trim();
+  }
+
+  /**
+   * Keep keys short without letting truncation invent collisions.
+   *
+   * Long labels that share a prefix — commit messages, article titles, file
+   * paths — are common, and slicing to 60 characters silently merges them into
+   * one key that ordinals then have to separate. Keeping a suffix hash means
+   * the key stays readable and still distinguishes them.
+   */
+  function boundedName(name) {
+    if (name.length <= 60) return name;
+    return name.slice(0, 60) + "+" + shortHash(name);
   }
 
   /** Chain of meaningful ancestor roles — survives wrapper divs being added. */
@@ -410,7 +422,7 @@ function scanSurface(maxNodes) {
         claimed.add(node);
         const testId = testIdOf(node);
         const role = roleOf(node);
-        const name = normalizeLabel(accessibleName(node));
+        const name = boundedName(normalizeLabel(accessibleName(node)));
         const path = roleAncestorPath(node);
 
         let identityStrategy;
@@ -432,10 +444,16 @@ function scanSurface(maxNodes) {
         // "~" and not "#": normalizeLabel already emits "#"-free text, but the
         // separator must be one that can never occur inside a key.
         const withOrdinal = seen === 0 ? identityKey : identityKey + "~" + seen;
+        // A data-testid is not necessarily unique — X reuses testid:reply on
+        // every post in the feed. Such an id is distinguished only by position
+        // and is no more durable than a positional one, so say so rather than
+        // letting the strategy label imply a durability it does not have.
+        const ordinalDisambiguated = seen > 0;
 
         actions.push({
           id: shortHash(withOrdinal),
           identityStrategy,
+          ordinalDisambiguated,
           identityKey: withOrdinal,
           label: accessibleName(node) || node.tagName.toLowerCase(),
           kind: c.kind,
