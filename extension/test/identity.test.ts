@@ -244,3 +244,20 @@ test("a shared testid is separated by name rather than by position", () => {
   expect(rows.every((r: any) => r.ordinalDisambiguated === false)).toBe(true);
   expect(new Set(rows.map((r: any) => r.id)).size).toBe(2);
 });
+
+test("a row of identically-labelled buttons is anchored by the row, not itself", () => {
+  // The Yahoo draft client: 100 "Draft" buttons, one per player row. Naming
+  // the container from its own first leaf picks up the button's own text and
+  // leaves every row identical.
+  const row = (name: string) =>
+    `<tr><td><div>${name}</div></td><td><div><button>Draft</button></div></td></tr>`;
+  const scan = render(`<main><table><tbody>
+    ${row("J. Gibbs")}${row("B. Robinson")}${row("P. Nacua")}
+  </tbody></table></main>`);
+  const drafts = scan.actions.filter((a: any) => a.label === "Draft");
+  expect(drafts).toHaveLength(3);
+  expect(drafts.every((d: any) => d.ordinalDisambiguated === false)).toBe(true);
+  expect(new Set(drafts.map((d: any) => d.id)).size).toBe(3);
+  // and the anchor must be the player, not the button's own text
+  expect(drafts[0].identityKey).toContain("gibbs");
+});

@@ -250,6 +250,10 @@ function scanSurface(maxNodes) {
    */
   function containerName(el) {
     let n = el.parentElement;
+    // Anything inside the control we are identifying is its own label, not the
+    // container's — a row of "Draft" buttons would otherwise all resolve to
+    // "draft" and stay indistinguishable.
+    const isSelf = (c) => c === el || el.contains(c);
     let hops = 0;
     while (n && hops < 6) {
       hops++;
@@ -260,7 +264,7 @@ function scanSurface(maxNodes) {
         const own = n.getAttribute("aria-label");
         if (own && own.trim()) return normalizeLabel(own);
         const anchor = n.querySelector("h1,h2,h3,h4,[role=heading],a[href]");
-        if (anchor) {
+        if (anchor && !isSelf(anchor)) {
           const t = normalizeLabel(anchor.innerText || anchor.getAttribute("aria-label") || "");
           if (t) return t.slice(0, 40);
         }
@@ -271,7 +275,7 @@ function scanSurface(maxNodes) {
         const leaves = n.querySelectorAll("*");
         for (let i = 0; i < leaves.length && i < 60; i++) {
           const c = leaves[i];
-          if (c.children.length) continue;
+          if (c.children.length || isSelf(c)) continue;
           const t = normalizeLabel(c.innerText || c.textContent || "");
           if (t.length >= 2 && t.length <= 40) return t;
         }
