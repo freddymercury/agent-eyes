@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
   "name": "AgentEyes",
-  "version": "0.1.0",
-  "description": "Sends the current page (or your selection) to a local agent bridge running on your laptop — click the icon or hit the shortcut.",
-  "permissions": ["activeTab", "scripting", "contextMenus"],
-  "host_permissions": ["http://localhost:8765/*"],
+  "version": "0.2.0",
+  "description": "Sends the current page (or your selection) to a local agent bridge — on demand, or continuously with auto-watch.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://localhost:8765/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -26,6 +32,13 @@
         "mac": "Command+Shift+K"
       },
       "description": "Highlight and click a specific element to send just that"
+    },
+    "toggle-watch": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Start/stop auto-watch on this tab"
     }
   }
 }

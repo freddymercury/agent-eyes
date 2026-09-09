@@ -19,11 +19,20 @@ const DIR = path.join(os.homedir(), ".agenteyes");
 const JSON_FILE = path.join(DIR, "context.json");
 const MD_FILE = path.join(DIR, "context.md");
 const CAPTURES_DIR = path.join(DIR, "captures");
+// One file per named watcher, so several watchers on the same page don't
+// overwrite each other the way the single context.json does.
+const WATCH_DIR = path.join(DIR, "watch");
 
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true });
 if (!fs.existsSync(CAPTURES_DIR)) fs.mkdirSync(CAPTURES_DIR, { recursive: true });
+if (!fs.existsSync(WATCH_DIR)) fs.mkdirSync(WATCH_DIR, { recursive: true });
 
 let latest = null;
+const watchers = new Map();
+
+function slug(str) {
+  return String(str || "watcher").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "watcher";
+}
 
 function domainFromUrl(url) {
   try {
@@ -73,6 +82,15 @@ function toMarkdown(data) {
   ].join("\n");
 }
 
+function writeWatcher(data) {
+  // Named watchers get their own stable file and are *not* appended to the
+  // capture history — they fire every few seconds and would flood it.
+  const name = `${data.watchId}_${slug(data.label)}`;
+  watchers.set(data.watchId, data);
+  fs.writeFileSync(path.join(WATCH_DIR, `${name}.json`), JSON.stringify(data, null, 2), "utf8");
+  fs.writeFileSync(path.join(WATCH_DIR, "latest.json"), JSON.stringify(data, null, 2), "utf8");
+}
+
 function writeFiles(data) {
   const md = toMarkdown(data);
 
@@ -111,8 +129,13 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         latest = data;
-        writeFiles(data);
-        console.log(`[agenteyes] received: ${data.title} (${data.text.length} chars)`);
+        if (data.watchId) {
+          writeWatcher(data);
+          console.log(`[agenteyes] watch ${data.watchId} "${data.label}" (${data.text.length} chars)`);
+        } else {
+          writeFiles(data);
+          console.log(`[agenteyes] received: ${data.title} (${data.text.length} chars)`);
+        }
         send(res, 200, JSON.stringify({ ok: true }));
       } catch (err) {
         send(res, 400, JSON.stringify({ ok: false, error: String(err) }));
@@ -126,6 +149,16 @@ const server = http.createServer((req, res) => {
     return send(res, 200, JSON.stringify(latest));
   }
 
+  if (req.method === "GET" && req.url === "/watch") {
+    return send(res, 200, JSON.stringify({
+      ok: true,
+      watchers: Array.from(watchers.values()).map((w) => ({
+        watchId: w.watchId, label: w.label, selector: w.selector,
+        capturedAt: w.capturedAt, chars: (w.text || "").length
+      }))
+    }));
+  }
+
   if (req.method === "GET" && req.url === "/context.md") {
     if (!fs.existsSync(MD_FILE)) return send(res, 404, "no page sent yet", "text/markdown");
     return send(res, 200, fs.readFileSync(MD_FILE, "utf8"), "text/markdown");
@@ -137,7 +170,7 @@ const server = http.createServer((req, res) => {
       200,
       JSON.stringify({
         status: "running",
-        endpoints: ["POST /context", "GET /context", "GET /context.md"],
+        endpoints: ["POST /context", "GET /context", "GET /context.md", "GET /watch"],
         file: JSON_FILE,
         capturesDir: CAPTURES_DIR
       })
@@ -151,4 +184,5 @@ server.listen(PORT, () => {
   console.log(`[agenteyes] listening on http://localhost:${PORT}`);
   console.log(`[agenteyes] writing to ${JSON_FILE}`);
   console.log(`[agenteyes] history in ${CAPTURES_DIR}`);
+  console.log(`[agenteyes] watchers in ${WATCH_DIR}`);
 });

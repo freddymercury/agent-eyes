@@ -2,6 +2,10 @@
 
 Sends whatever page you're looking at (or just your text selection) straight to a local agent, no copy-paste.
 
+Two modes: **on demand** (press a key, one capture lands) or **watchers** (point
+at one or more elements and each re-sends itself every 5 seconds, but only when
+its content actually changed).
+
 ## 1. Start the server
 
 ```
@@ -26,8 +30,18 @@ Four ways in, all doing the same two things — send the page, or pick an elemen
 - **Right-click anywhere on a page** — same two options in the context menu, right where your cursor already is
 - **Cmd+Shift+L** (Mac) / **Ctrl+Shift+L** (Win/Linux) — sends the whole page straight away, or just your selection if you've highlighted text
 - **Cmd+Shift+K** (Mac) / **Ctrl+Shift+K** (Win/Linux) — jumps straight into picker mode
+- **Cmd+Shift+Y** (Mac) / **Ctrl+Shift+Y** (Win/Linux) — pick an element to **watch** continuously
 
 **Picker mode** (from any entry point): hover to highlight whatever's under your cursor — a label shows its tag/id/class — click to send just that element. **Esc** cancels without sending anything.
+
+**Watch mode** (Cmd+Shift+Y): same picker, but the element you click is added to
+a watch list and re-sent whenever its text changes. Name it when prompted. Add
+as many as you like — a list and a roster, say — and each gets its own file. The
+popup shows them all with a **×** to remove one, or "Remove all".
+
+A red dot next to a watcher means its selector stopped matching: the page
+re-rendered that element away, so re-pick it. Watchers live in the page, so
+closing the tab stops them.
 
 The icon flashes a teal check on success, red `!` if it failed (usually means the server isn't running).
 
@@ -39,6 +53,10 @@ Whatever you build next can pull the latest page in either form:
   - `~/.agenteyes/context.json` (structured: title, url, text, capturedAt)
   - `~/.agenteyes/context.md` (markdown, good for just `cat`-ing into a prompt)
 - **HTTP** — `GET http://localhost:8765/context` returns the same JSON
+- **Watchers** — `~/.agenteyes/watch/<watchId>_<label>.json`, one file per
+  active watcher, rewritten in place on every change so each is always current.
+  `GET http://localhost:8765/watch` lists what's live. Watchers are deliberately
+  *not* added to `captures/` — they fire every few seconds and would flood it.
 - **History** — every capture is also kept at `~/.agenteyes/captures/`,
   one file per send, named `<timestamp>_<domain>_<page|element>.md`, so
   sending a new page never erases the last one. Nothing reads from here
@@ -74,9 +92,14 @@ text with no idea it's a live capture from your browser.
 
 ## Notes / known rough edges
 
-- This is on-demand only — nothing is sent until you click or hit a shortcut. No background polling, no continuous sync.
-- One page (or element) at a time — sending a new capture overwrites
-  `context.md` / `context.json`. Every capture is also kept, one file per
+- On-demand captures send nothing until you click or hit a shortcut. Watchers do
+  poll, every 5s, but only POST when the watched element's text actually changed.
+- The polling interval runs **in the page**, not the service worker — MV3 workers
+  are evicted when idle and `chrome.alarms` floors at 30s, too slow to track
+  anything live.
+- One page (or element) at a time for on-demand captures — sending a new one
+  overwrites `context.md` / `context.json`. Watchers each keep their own file
+  and don't clobber each other. Every capture is also kept, one file per
   send, in `~/.agenteyes/captures/` if you want to look something up
   later — nothing reads from there automatically.
 - Text and structure, no vision — the element picker gives you the target's `outerHTML` alongside its flattened text, but nothing is screenshotted. Good enough for "let the agent read the specific thing I'm pointing at" without pulling in the bigger sensing/tool-building design.
