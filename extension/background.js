@@ -1022,6 +1022,66 @@ function watchKitCall(method, arg) {
   return { ok: false, error: "unknown method " + method };
 }
 
+/**
+ * Click one previously-discovered action, by identity.
+ *
+ * Re-scans and re-resolves first. An action id refers to a scan, and a scan is
+ * a moment — the gap between reading the page and acting on it is where wrong
+ * clicks live. If the label or kind has moved since the caller read it, refuse
+ * rather than click something adjacent.
+ */
+function invokeActionInPage(actionId, expectedKey, maxNodes, dryRun) {
+  const scan = scanSurface(maxNodes);
+  const matches = scan.actions.filter((a) => a.id === actionId);
+
+  if (!matches.length) return { ok: false, outcome: "action_gone", scanned: scan.actions.length };
+  if (matches.length > 1) return { ok: false, outcome: "ambiguous", count: matches.length };
+
+  const action = matches[0];
+  if (expectedKey && action.identityKey !== expectedKey) {
+    return { ok: false, outcome: "action_changed", was: expectedKey, now: action.identityKey };
+  }
+  // Position-dependent ids are exactly what changes between scanning and
+  // clicking. Refusing them is the difference between drafting the player you
+  // meant and the one who moved into that row.
+  if (action.ordinalDisambiguated) {
+    return { ok: false, outcome: "unstable_id", identityKey: action.identityKey };
+  }
+  if (action.enabled === false) return { ok: false, outcome: "disabled", label: action.label };
+
+  const el = document.querySelector(action.domExposure.domPath);
+  if (!el) return { ok: false, outcome: "not_resolvable", domPath: action.domExposure.domPath };
+
+  const rect = el.getBoundingClientRect();
+  if (!rect.width || !rect.height) return { ok: false, outcome: "not_clickable", label: action.label };
+
+  // Whatever is actually at the click point is what a click would hit. An
+  // overlay the user cannot see is precisely the accident to avoid.
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const atPoint = document.elementFromPoint(cx, cy);
+  if (atPoint && atPoint !== el && !el.contains(atPoint) && !atPoint.contains(el)) {
+    return {
+      ok: false,
+      outcome: "obscured_by",
+      by: atPoint.tagName.toLowerCase() + (atPoint.className ? "." + String(atPoint.className).split(/\s+/)[0] : ""),
+      label: action.label
+    };
+  }
+
+  const described = {
+    label: action.label,
+    kind: action.kind,
+    landmark: action.landmark || null,
+    identityKey: action.identityKey,
+    url: location.href
+  };
+  if (dryRun) return { ok: true, outcome: "would_click", action: described };
+
+  el.click();
+  return { ok: true, outcome: "clicked", action: described };
+}
+
 // ---- shared send + badge feedback ----
 
 function flashBadge(text, color) {
@@ -1295,6 +1355,22 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "agenteyes-invoke-action") {
+    (async () => {
+      const tab = await resolveTab(null);
+      if (!tab) return sendResponse({ ok: false, outcome: "no_tab" });
+      const origin = tab.url ? new URL(tab.url).origin : "";
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: invokeActionInPage,
+        args: [message.actionId, message.expectedKey || null, SCAN_MAX_NODES, message.dryRun !== false]
+      });
+      console.log("AgentEyes invoke:", origin, JSON.stringify(result));
+      sendResponse({ ...result, origin });
+    })();
+    return true;
+  }
+
   if (message?.type === "agenteyes-watch-report") {
     postToBridge(message.data || message.payload).then((r) => sendResponse(r));
     return true;
