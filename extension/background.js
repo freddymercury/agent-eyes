@@ -168,6 +168,9 @@ function installWatchKit(bridgeUrl, intervalMs) {
         last: null,
         sent: 0,
         failed: 0,
+        // Monotonic per watcher, so a consumer can tell a genuine change from
+        // an identical re-send after a restart.
+        revision: 0,
         timer: null
       };
       w.timer = setInterval(() => registry.tick(id), registry.intervalMs);
@@ -181,7 +184,27 @@ function installWatchKit(bridgeUrl, intervalMs) {
       if (!w) return false;
       clearInterval(w.timer);
       registry.watchers.delete(id);
+      // Tombstone, so consumers retire the watcher immediately instead of
+      // waiting for it to look stale — those are different situations.
+      registry.tombstone(w);
       return true;
+    },
+
+    tombstone(w) {
+      try {
+        fetch(registry.bridgeUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            watchId: w.id,
+            label: w.label,
+            removed: true,
+            capturedAt: new Date().toISOString()
+          })
+        });
+      } catch (err) {
+        /* removal is best-effort; the watcher is already stopped */
+      }
     },
 
     clear() {
@@ -215,11 +238,24 @@ function installWatchKit(bridgeUrl, intervalMs) {
       const w = registry.watchers.get(id);
       if (!w) return;
       const el = registry.resolve(w);
-      if (!el) return;
+      if (!el) {
+        // The element was re-rendered away. Report it once rather than going
+        // quiet, which is indistinguishable from a page that just isn't changing.
+        if (w.last !== null) {
+          w.last = null;
+          registry.report(w, "", false);
+        }
+        return;
+      }
       const text = el.innerText || "";
       const h = hash(text);
       if (h === w.last) return;
       w.last = h;
+      await registry.report(w, text, true);
+    },
+
+    async report(w, text, alive) {
+      w.revision++;
       try {
         const res = await fetch(registry.bridgeUrl, {
           method: "POST",
@@ -232,6 +268,8 @@ function installWatchKit(bridgeUrl, intervalMs) {
             label: w.label,
             elementPicked: true,
             selector: w.selector,
+            alive,
+            revision: w.revision,
             text: text.slice(0, 200000),
             capturedAt: new Date().toISOString()
           })

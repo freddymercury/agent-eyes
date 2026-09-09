@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "agent-eyes": {
+      "command": "bun",
+      "args": ["run", "bridge/src/index.ts"],
+      "env": {
+        "AGENT_EYES_MODE": "read",
+        "AGENT_EYES_STALE_AFTER": "30"
+      }
+    }
+  }
+}

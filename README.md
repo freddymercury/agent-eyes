@@ -95,6 +95,60 @@ ln -s AGENTS.md CLAUDE.md    # or whatever filename your harness expects
 Without this, the agent has no framing for the file — it'll just see raw
 text with no idea it's a live capture from your browser.
 
+## Agent Bridge (MCP)
+
+The bridge exposes what the extension sees to any MCP-capable harness, so an
+agent can pull the *current* page instead of reading a file written at some
+unknown past moment.
+
+```bash
+bun install
+bun run bridge      # stdio MCP server
+```
+
+For Claude Code, `.mcp.json` in this repo already registers it. Other harnesses
+take the same command: `bun run bridge/src/index.ts`.
+
+### Resources
+
+Watched elements are exposed as resources with subscriptions, so a harness is
+*told* when the surface changed rather than polling for it.
+
+| URI | Contents |
+|---|---|
+| `agenteyes://context` | URL, title, capture time |
+| `agenteyes://watch` | list of active watchpoints |
+| `agenteyes://watch/{id}` | one watchpoint's text and freshness |
+
+### Tools
+
+| Tool | Returns |
+|---|---|
+| `agent_eyes_get_context` | where the observation came from |
+| `agent_eyes_get_surface` | normalized snapshot — check `completeness` |
+| `agent_eyes_get_text` | raw extracted text |
+| `agent_eyes_list_watchpoints` | active watchpoints |
+| `agent_eyes_get_watchpoint` | one watchpoint's state |
+| `agent_eyes_get_staleness` | how old the observation is, and whether to trust it |
+
+`get_surface` currently reports `completeness: "text-only"`, and its `actions`
+array is empty because this build does not inspect actions yet — not because the
+page has none. That distinction is the point of the field.
+
+### Configuration
+
+| Env var | Default | Meaning |
+|---|--:|---|
+| `AGENT_EYES_MODE` | `read` | `readwrite` enables the write plane (not implemented yet) |
+| `AGENT_EYES_STALE_AFTER` | `30` | seconds before an observation is reported stale |
+| `AGENT_EYES_DIR` | `~/.agenteyes` | capture directory; override to run instances side by side |
+
+In `read` mode write tools are **absent** from the tool list rather than present
+and failing — an agent should not be offered a capability it cannot use.
+
+The bridge only ever reads. `~/.agenteyes/` stays a public interface that other
+tools read directly, and a test asserts the bridge never mutates it.
+
 ## Notes / known rough edges
 
 - On-demand captures send nothing until you click or hit a shortcut. Watchers do
