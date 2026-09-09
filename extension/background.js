@@ -722,6 +722,118 @@ function scanSurface(maxNodes) {
   };
 }
 
+// ---- page telemetry: console, network, errors ----
+//
+// Injected into the MAIN world, because console and fetch belong to the page's
+// own realm — an isolated content script sees neither. It holds no credentials
+// and makes no outbound calls of its own: it buffers, and the extension reads
+// the buffer. Anything hostile on the page can read this code, so there must be
+// nothing here worth stealing.
+
+function installTelemetry(limit) {
+  if (window.__agentEyesTelemetry) return true;
+
+  const cap = limit || 200;
+  const buf = { console: [], network: [], errors: [], startedAt: new Date().toISOString() };
+  const push = (arr, item) => {
+    arr.push(item);
+    if (arr.length > cap) arr.shift();
+  };
+
+  // Arguments can be anything, including cyclic objects and DOM nodes.
+  const brief = (v) => {
+    // Cheap cases first, and guard every global. A bare `v instanceof Element`
+    // throws where Element is undefined, and the catch below turns that into
+    // "[unserialisable]" for perfectly ordinary strings — the handler hiding
+    // the fault rather than reporting it.
+    if (v === null) return "null";
+    if (v === undefined) return "undefined";
+    const t = typeof v;
+    if (t === "string") return v.slice(0, 300);
+    if (t === "number" || t === "boolean" || t === "bigint") return String(v);
+    if (t === "function") return "[function " + (v.name || "anonymous") + "]";
+    try {
+      if (typeof Error !== "undefined" && v instanceof Error) return v.name + ": " + v.message;
+      if (typeof Element !== "undefined" && v instanceof Element) {
+        return "<" + v.tagName.toLowerCase() + ">";
+      }
+      return JSON.stringify(v).slice(0, 300);
+    } catch (err) {
+      return "[unserialisable]";
+    }
+  };
+
+  for (const level of ["log", "info", "warn", "error", "debug"]) {
+    const original = console[level].bind(console);
+    console[level] = function (...args) {
+      push(buf.console, { at: Date.now(), level, args: args.map(brief) });
+      return original(...args);
+    };
+  }
+
+  const originalFetch = window.fetch;
+  window.fetch = async function (input, init) {
+    const started = Date.now();
+    const url = typeof input === "string" ? input : input && input.url;
+    const method = (init && init.method) || (input && input.method) || "GET";
+    try {
+      const res = await originalFetch.apply(this, arguments);
+      push(buf.network, { at: started, ms: Date.now() - started, method, url: String(url).slice(0, 300), status: res.status, kind: "fetch" });
+      return res;
+    } catch (err) {
+      push(buf.network, { at: started, ms: Date.now() - started, method, url: String(url).slice(0, 300), status: 0, error: String(err), kind: "fetch" });
+      throw err;
+    }
+  };
+
+  const XHR = window.XMLHttpRequest;
+  if (XHR) {
+    const open = XHR.prototype.open;
+    const send = XHR.prototype.send;
+    XHR.prototype.open = function (method, url) {
+      this.__ae = { method, url: String(url).slice(0, 300), at: Date.now() };
+      return open.apply(this, arguments);
+    };
+    XHR.prototype.send = function () {
+      const meta = this.__ae;
+      if (meta) {
+        this.addEventListener("loadend", () => {
+          push(buf.network, { ...meta, ms: Date.now() - meta.at, status: this.status, kind: "xhr" });
+        });
+      }
+      return send.apply(this, arguments);
+    };
+  }
+
+  window.addEventListener("error", (e) => {
+    push(buf.errors, { at: Date.now(), message: String(e.message).slice(0, 300), source: String(e.filename || "").slice(0, 200), line: e.lineno });
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    push(buf.errors, { at: Date.now(), message: "unhandled rejection: " + brief(e.reason), source: "", line: 0 });
+  });
+
+  window.__agentEyesTelemetry = buf;
+  return true;
+}
+
+function readTelemetry(clear) {
+  const buf = window.__agentEyesTelemetry;
+  if (!buf) return { installed: false };
+  const snapshot = {
+    installed: true,
+    startedAt: buf.startedAt,
+    console: buf.console.slice(),
+    network: buf.network.slice(),
+    errors: buf.errors.slice()
+  };
+  if (clear) {
+    buf.console.length = 0;
+    buf.network.length = 0;
+    buf.errors.length = 0;
+  }
+  return snapshot;
+}
+
 // ---- watch kit: multiple named element watchers, each diffed independently ----
 //
 // Installed once per tab. Keeps a registry on window so it survives service
@@ -1174,6 +1286,46 @@ async function retireWatchers(tabId, reason) {
 // Bounded so a pathological page degrades to a truncated scan rather than
 // hanging the tab. Reported in stats.truncated when hit.
 const SCAN_MAX_NODES = 20000;
+const TELEMETRY_BUFFER = 200;
+
+/**
+ * Install the page telemetry hooks, in the page's own realm.
+ *
+ * MAIN world is required: console and fetch belong to the page, and an
+ * isolated content script patches its own copies, seeing nothing.
+ */
+async function installTelemetry_(tabId) {
+  const tab = await resolveTab(tabId);
+  if (!tab) return { ok: false };
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: installTelemetry,
+    args: [TELEMETRY_BUFFER]
+  });
+  return { ok: true, tabId: tab.id };
+}
+
+/** Read the buffer and send it to the bridge. */
+async function sendTelemetry_(tabId, clear) {
+  const tab = await resolveTab(tabId);
+  if (!tab) return { ok: false };
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: "MAIN",
+    func: readTelemetry,
+    args: [clear !== false]
+  });
+  if (!result || !result.installed) return { ok: false, error: "telemetry not installed on this tab" };
+  const res = await postToBridge({
+    kind: "telemetry",
+    title: tab.title,
+    url: tab.url,
+    capturedAt: new Date().toISOString(),
+    ...result
+  });
+  return { ok: res.ok, counts: { console: result.console.length, network: result.network.length, errors: result.errors.length } };
+}
 
 /**
  * A default name derived from where the snapshot was taken.
@@ -1355,6 +1507,16 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "agenteyes-popup-telemetry-install") {
+    installTelemetry_(null).then((r) => sendResponse(r));
+    return true;
+  }
+
+  if (message?.type === "agenteyes-popup-telemetry-send") {
+    sendTelemetry_(null, true).then((r) => sendResponse(r));
+    return true;
+  }
+
   if (message?.type === "agenteyes-invoke-action") {
     (async () => {
       const tab = await resolveTab(null);

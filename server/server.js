@@ -46,6 +46,10 @@ const WATCH_EXPIRE_SECONDS = Number(process.env.AGENT_EYES_WATCH_EXPIRE || 900);
 // Latest interactive-surface scan. Overwritten rather than appended: it is a
 // current-state file, like context.json, not a history.
 const SURFACE_FILE = path.join(DIR, "surface.json");
+// Console, network and errors from the page. Appended rather than overwritten:
+// unlike a surface scan, the interesting part is usually what happened, not
+// what is true now.
+const TELEMETRY_FILE = path.join(DIR, "telemetry.jsonl");
 
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true });
 if (!fs.existsSync(CAPTURES_DIR)) fs.mkdirSync(CAPTURES_DIR, { recursive: true });
@@ -241,6 +245,18 @@ const server = http.createServer((req, res) => {
           return send(res, 200, JSON.stringify({ ok: true, retired: data.watchId }));
         }
 
+        if (data.kind === "telemetry") {
+          const line = JSON.stringify({ at: data.capturedAt, url: data.url, ...{
+            console: data.console || [], network: data.network || [], errors: data.errors || []
+          }});
+          fs.appendFileSync(TELEMETRY_FILE, line + "\n", "utf8");
+          console.log(
+            `[agenteyes] telemetry: ${(data.console || []).length} console, ` +
+              `${(data.network || []).length} network, ${(data.errors || []).length} errors`
+          );
+          return send(res, 200, JSON.stringify({ ok: true }));
+        }
+
         if (data.kind === "surface") {
           writeSurface(data);
           const st = data.stats || {};
@@ -339,6 +355,12 @@ const server = http.createServer((req, res) => {
       console.log(`[agenteyes]   recoverable at ${dest}`);
       return send(res, 200, JSON.stringify({ ok: true, trashed: dest }));
     }
+  }
+
+  if (req.method === "GET" && req.url === "/telemetry") {
+    if (!fs.existsSync(TELEMETRY_FILE)) return send(res, 404, JSON.stringify({ ok: false, error: "no telemetry yet" }));
+    const lines = fs.readFileSync(TELEMETRY_FILE, "utf8").trim().split("\n").slice(-50);
+    return send(res, 200, JSON.stringify({ ok: true, batches: lines.map((l) => JSON.parse(l)) }));
   }
 
   if (req.method === "GET" && req.url === "/surface") {
