@@ -2,6 +2,8 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
+  Action,
+  ScanStats,
   SurfaceContext,
   SurfaceStaleness,
   WatchpointDescriptor,
@@ -13,6 +15,7 @@ import type {
 export const AGENTEYES_DIR = process.env.AGENT_EYES_DIR ?? join(homedir(), ".agenteyes");
 export const WATCH_DIR = join(AGENTEYES_DIR, "watch");
 export const CONTEXT_FILE = join(AGENTEYES_DIR, "context.json");
+export const SURFACE_FILE = join(AGENTEYES_DIR, "surface.json");
 
 /** Shape the extension POSTs and the server persists. */
 interface WatcherFile {
@@ -128,6 +131,51 @@ export async function readStaleness(staleAfterSeconds: number): Promise<SurfaceS
     staleAfterSeconds,
     reason: allDead ? "tab_closed" : age > staleAfterSeconds ? "age" : undefined,
   };
+}
+
+export interface SurfaceScan {
+  actions: Action[];
+  stats: ScanStats;
+  url: string;
+  title: string;
+  capturedAt: string;
+  ageSeconds: number;
+}
+
+/**
+ * The most recent interactive-surface scan, if one has been taken.
+ *
+ * Scans are explicit and on-demand — unlike watchers, nothing refreshes this
+ * automatically, so age matters more here and is always reported.
+ */
+export async function readSurfaceScan(): Promise<SurfaceScan | null> {
+  try {
+    const d = (await Bun.file(SURFACE_FILE).json()) as {
+      actions?: Action[];
+      stats?: ScanStats;
+      url?: string;
+      title?: string;
+      capturedAt?: string;
+    };
+    if (!d.actions) return null;
+    return {
+      actions: d.actions,
+      stats: d.stats ?? {
+        nodesVisited: 0,
+        actionsFound: d.actions.length,
+        durationMs: 0,
+        truncated: false,
+        shadowRootsTraversed: 0,
+        iframesSkipped: 0,
+      },
+      url: d.url ?? "",
+      title: d.title ?? "",
+      capturedAt: d.capturedAt ?? "",
+      ageSeconds: Math.round(ageOf(d.capturedAt)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Raw text for one watcher, or the whole most recent capture. */

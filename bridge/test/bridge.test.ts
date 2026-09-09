@@ -137,3 +137,51 @@ test("AC7: reports staleness rather than crashing with no captures at all", asyn
   expect(st.reason).toBe("no_capture");
   expect(st.stale).toBe(true);
 });
+
+const writeSurface = (actions: unknown[]) =>
+  writeFile(
+    join(root, "surface.json"),
+    JSON.stringify({
+      kind: "surface", title: "Test Page", url: "https://example.test/app",
+      capturedAt: new Date().toISOString(), actions,
+      stats: { nodesVisited: 120, actionsFound: actions.length, durationMs: 8,
+               truncated: false, shadowRootsTraversed: 0, iframesSkipped: 1 },
+    }),
+  );
+
+test("F2: list_actions explains itself when no scan has been taken", async () => {
+  const out = await client.callTool({ name: "agent_eyes_list_actions", arguments: {} });
+  const r = JSON.parse((out.content as Array<{ text: string }>)[0]!.text);
+  // An empty list would be indistinguishable from "this page has no actions".
+  expect(r.error).toContain("no surface scan");
+  expect(r.hint).toContain("Cmd+Shift+U");
+});
+
+test("F2: scanned actions are listed and filterable by confidence", async () => {
+  await writeSurface([
+    { id: "a0", label: "Save", kind: "activate", confidence: 0.95,
+      evidence: { nativeDom: true }, enabled: true,
+      domExposure: { domPath: "body > button", tagName: "button" } },
+    { id: "a1", label: "Styled only", kind: "activate", confidence: 0.15,
+      evidence: { pointerCursor: true }, enabled: true,
+      domExposure: { domPath: "body > div", tagName: "div" } },
+  ]);
+
+  let out = await client.callTool({ name: "agent_eyes_list_actions", arguments: {} });
+  let r = JSON.parse((out.content as Array<{ text: string }>)[0]!.text);
+  expect(r.actions).toHaveLength(2);
+  expect(r.stats.iframesSkipped).toBe(1);
+
+  out = await client.callTool({ name: "agent_eyes_list_actions", arguments: { minConfidence: 0.5 } });
+  r = JSON.parse((out.content as Array<{ text: string }>)[0]!.text);
+  expect(r.actions).toHaveLength(1);
+  expect(r.actions[0].label).toBe("Save");
+});
+
+test("F2: completeness flips to dom-actions only once a scan exists", async () => {
+  const out = await client.callTool({ name: "agent_eyes_get_surface", arguments: {} });
+  const snap = JSON.parse((out.content as Array<{ text: string }>)[0]!.text);
+  expect(snap.completeness).toBe("dom-actions");
+  expect(snap.actions.length).toBeGreaterThan(0);
+  expect(snap.scanStats.nodesVisited).toBe(120);
+});

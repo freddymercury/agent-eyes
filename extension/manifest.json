@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AgentEyes",
-  "version": "0.2.0",
-  "description": "Sends the current page (or your selection) to a local agent bridge — on demand, or continuously with auto-watch.",
+  "version": "0.3.0",
+  "description": "Sends the current page (or your selection) to a local agent bridge \u2014 on demand, or continuously with auto-watch.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -39,6 +39,13 @@
         "mac": "Command+Shift+Y"
       },
       "description": "Start/stop auto-watch on this tab"
+    },
+    "scan-surface": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Scan the page's interactive surface"
     }
   }
 }

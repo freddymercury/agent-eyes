@@ -50,13 +50,71 @@ export interface SurfaceStaleness {
   reason?: "no_capture" | "tab_closed" | "age";
 }
 
-/** Placeholder until Phase 2 normalization exists. */
+export type ActionKind =
+  | "activate"
+  | "input"
+  | "navigate"
+  | "submit"
+  | "select"
+  | "toggle"
+  | "other";
+
+/**
+ * Why we believe this element is interactive.
+ *
+ * Kept as separate signals rather than collapsed into a boolean because they
+ * disagree in practice: a native <button> is interactive with no listener at
+ * all, while a clickable <div> has no semantics to detect. Confidence is
+ * derived from the combination, and the caller can see what it was derived
+ * from.
+ */
+export interface ActionEvidence {
+  /** A natively interactive element: button, a[href], input, select… */
+  nativeDom?: boolean;
+  /** An explicit ARIA interactive role. */
+  accessibility?: boolean;
+  /** An inline handler attribute. Listeners added via addEventListener are
+   *  NOT detectable from an extension content script — see docs. */
+  inlineHandler?: boolean;
+  /** Focusable via tabindex. */
+  focusable?: boolean;
+  /** Styled as clickable (cursor: pointer). Weakest signal. */
+  pointerCursor?: boolean;
+}
+
+export interface DomExposure {
+  /** Structural path. NOT a stable identity — that is F3. */
+  domPath: string;
+  tagName: string;
+  role?: string;
+  accessibleName?: string;
+}
+
 export interface Action {
+  /**
+   * Positional and NOT stable across releases. F2 deliberately ships unstable
+   * ids so that discovery can be judged before identity is solved; nothing
+   * compares two captures yet.
+   */
   id: string;
   label: string;
-  kind: "activate" | "input" | "navigate" | "submit" | "select" | "toggle" | "other";
+  kind: ActionKind;
+  evidence: ActionEvidence;
+  domExposure: DomExposure;
   enabled?: boolean;
+  /** 0-1, derived from the evidence combination. */
   confidence: number;
+}
+
+/** Reported alongside a scan so slow pages are visible rather than mysterious. */
+export interface ScanStats {
+  nodesVisited: number;
+  actionsFound: number;
+  durationMs: number;
+  truncated: boolean;
+  shadowRootsTraversed: number;
+  /** Same-origin iframes are deliberately not traversed; see docs. */
+  iframesSkipped: number;
 }
 
 export interface WebMcpExposure {
@@ -80,6 +138,7 @@ export interface SurfaceSnapshot {
   webmcpTools: WebMcpExposure[];
   watchpoints: WatchpointState[];
   text?: string;
+  scanStats?: ScanStats;
 }
 
 export type CapabilityMode = "read" | "readwrite";
@@ -101,6 +160,7 @@ export const DEFAULT_BRIDGE_CONFIG: BridgeConfig = {
 // --- resource URIs -----------------------------------------------------------
 
 export const URI_CONTEXT = "agenteyes://context";
+export const URI_ACTIONS = "agenteyes://actions";
 export const URI_WATCH_LIST = "agenteyes://watch";
 export const watchUri = (id: string) => `agenteyes://watch/${id}`;
 export const parseWatchUri = (uri: string): string | null =>

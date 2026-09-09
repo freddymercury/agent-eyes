@@ -6,13 +6,21 @@ import {
 import { z } from "zod";
 import {
   DEFAULT_BRIDGE_CONFIG,
+  URI_ACTIONS,
   URI_CONTEXT,
   URI_WATCH_LIST,
   watchUri,
   type BridgeConfig,
   type SurfaceSnapshot,
 } from "@agent-eyes/protocol";
-import { readContext, readStaleness, readText, readWatchers, type Watcher } from "./source";
+import {
+  readContext,
+  readStaleness,
+  readSurfaceScan,
+  readText,
+  readWatchers,
+  type Watcher,
+} from "./source";
 
 const json = (v: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(v, null, 2) }] });
 
@@ -96,6 +104,21 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
     },
   );
 
+  server.registerResource(
+    "actions",
+    URI_ACTIONS,
+    { title: "Discovered interactive actions", mimeType: "application/json" },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(await readSurfaceScan(), null, 2),
+        },
+      ],
+    }),
+  );
+
   // --- tools ----------------------------------------------------------------
 
   server.registerTool(
@@ -146,6 +169,37 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
   );
 
   server.registerTool(
+    "agent_eyes_list_actions",
+    {
+      title: "List interactive actions",
+      description:
+        "Everything the page appears to let a user do, with the evidence each was " +
+        "detected by and a confidence score. Requires a scan (Cmd+Shift+U in the " +
+        "extension); returns an explicit error if none has been taken. " +
+        "Ids are positional and not stable across page loads.",
+      inputSchema: {
+        minConfidence: z.number().optional().describe("Filter out weaker detections, 0-1"),
+      },
+    },
+    async ({ minConfidence }: { minConfidence?: number }) => {
+      const scan = await readSurfaceScan();
+      if (!scan) {
+        return json({
+          error: "no surface scan available",
+          hint: "run a scan from the extension (Cmd+Shift+U) first",
+        });
+      }
+      const min = minConfidence ?? 0;
+      return json({
+        capturedAt: scan.capturedAt,
+        ageSeconds: scan.ageSeconds,
+        stats: scan.stats,
+        actions: scan.actions.filter((a) => a.confidence >= min),
+      });
+    },
+  );
+
+  server.registerTool(
     "agent_eyes_get_surface",
     {
       title: "Get surface",
@@ -154,16 +208,23 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
         "so an empty `actions` array means actions were never inspected, not that none exist.",
     },
     async () => {
-      const [ctx, watchers] = await Promise.all([readContext(), readWatchers()]);
+      const [ctx, watchers, scan] = await Promise.all([
+        readContext(),
+        readWatchers(),
+        readSurfaceScan(),
+      ]);
       const snapshot: SurfaceSnapshot = {
         schemaVersion: 1,
         id: `surface-${Date.now()}`,
         context: ctx ?? { url: "", title: "", capturedAt: "" },
-        completeness: "text-only",
-        actions: [],
+        // Only claim dom-actions when a scan actually exists, so an empty
+        // actions array is never ambiguous between "none found" and "never looked".
+        completeness: scan ? "dom-actions" : "text-only",
+        actions: scan?.actions ?? [],
         webmcpTools: [],
         watchpoints: watchers.map((w) => w.state),
         text: (await readText()) ?? undefined,
+        scanStats: scan?.stats,
       };
       return json(snapshot);
     },

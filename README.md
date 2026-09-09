@@ -31,6 +31,7 @@ Four ways in, all doing the same two things — send the page, or pick an elemen
 - **Cmd+Shift+L** (Mac) / **Ctrl+Shift+L** (Win/Linux) — sends the whole page straight away, or just your selection if you've highlighted text
 - **Cmd+Shift+K** (Mac) / **Ctrl+Shift+K** (Win/Linux) — jumps straight into picker mode
 - **Cmd+Shift+Y** (Mac) / **Ctrl+Shift+Y** (Win/Linux) — pick an element to **watch** continuously
+- **Cmd+Shift+U** (Mac) / **Ctrl+Shift+U** (Win/Linux) — **scan** the page's interactive surface
 
 **Picker mode** (from any entry point): hover to highlight whatever's under your cursor — a label shows its tag/id/class — click to send just that element. **Esc** cancels without sending anything.
 
@@ -109,6 +110,35 @@ bun run bridge      # stdio MCP server
 For Claude Code, `.mcp.json` in this repo already registers it. Other harnesses
 take the same command: `bun run bridge/src/index.ts`.
 
+### Scanning the interactive surface
+
+**Cmd+Shift+U** inventories what the page appears to let a user do — buttons,
+links, form controls, ARIA-interactive elements, and elements that are merely
+styled as clickable. Each is reported with the evidence it was detected by and a
+confidence score derived from that combination.
+
+Listeners added with `addEventListener` are **not** detectable from an extension
+content script, and frameworks delegate handlers at a root node anyway, so
+"has a listener" is neither necessary nor sufficient for "is interactive". The
+scanner combines semantic, accessibility, focusability and styling signals
+instead, and reports which fired so a weak detection can be judged rather than
+silently trusted.
+
+| Signal | Weight |
+|---|--:|
+| native interactive element | 0.75 |
+| explicit ARIA role | 0.55 |
+| inline handler attribute | 0.35 |
+| focusable via tabindex | 0.20 |
+| `cursor: pointer` only | 0.15 |
+
+Same-origin iframes are skipped and counted rather than silently omitted. Scans
+stop after 20,000 nodes and report `truncated: true` instead of hanging the tab.
+
+Action ids are **positional and not stable** across loads. That is deliberate:
+nothing compares two scans yet, and stable identity is a harder problem worth
+solving on its own.
+
 ### Resources
 
 Watched elements are exposed as resources with subscriptions, so a harness is
@@ -119,6 +149,7 @@ Watched elements are exposed as resources with subscriptions, so a harness is
 | `agenteyes://context` | URL, title, capture time |
 | `agenteyes://watch` | list of active watchpoints |
 | `agenteyes://watch/{id}` | one watchpoint's text and freshness |
+| `agenteyes://actions` | the most recent interactive-surface scan |
 
 ### Tools
 
@@ -126,14 +157,17 @@ Watched elements are exposed as resources with subscriptions, so a harness is
 |---|---|
 | `agent_eyes_get_context` | where the observation came from |
 | `agent_eyes_get_surface` | normalized snapshot — check `completeness` |
+| `agent_eyes_list_actions` | discovered actions, filterable by `minConfidence` |
 | `agent_eyes_get_text` | raw extracted text |
 | `agent_eyes_list_watchpoints` | active watchpoints |
 | `agent_eyes_get_watchpoint` | one watchpoint's state |
 | `agent_eyes_get_staleness` | how old the observation is, and whether to trust it |
 
-`get_surface` currently reports `completeness: "text-only"`, and its `actions`
-array is empty because this build does not inspect actions yet — not because the
-page has none. That distinction is the point of the field.
+`get_surface` reports `completeness: "text-only"` until a scan has been taken,
+then `"dom-actions"`. An empty `actions` array therefore never has to be guessed
+at: with `text-only` it means nothing looked, with `dom-actions` it means nothing
+was found. `list_actions` returns an explicit error rather than an empty list
+when no scan exists, for the same reason.
 
 ### Configuration
 

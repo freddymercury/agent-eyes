@@ -113,6 +113,250 @@ function startElementPicker(mode) {
   document.addEventListener("keydown", onKey, true);
 }
 
+// ---- surface discovery: inventory what is interactive on the page ----
+//
+// Evidence, not truth. Frameworks delegate handlers at a root node, so
+// "has a listener" is neither necessary nor sufficient for "is interactive" —
+// and addEventListener registrations are invisible to a content script anyway.
+// We combine semantic, accessibility, focusability and styling signals, and
+// report which ones fired so a low-confidence entry can be judged rather than
+// silently trusted.
+
+function scanSurface(maxNodes) {
+  const started = Date.now();
+  const stats = {
+    nodesVisited: 0,
+    actionsFound: 0,
+    durationMs: 0,
+    truncated: false,
+    shadowRootsTraversed: 0,
+    iframesSkipped: 0
+  };
+
+  const NATIVE = {
+    BUTTON: "activate",
+    A: "navigate",
+    SELECT: "select",
+    TEXTAREA: "input",
+    SUMMARY: "toggle",
+    OPTION: "select"
+  };
+  const ARIA_KIND = {
+    button: "activate",
+    link: "navigate",
+    menuitem: "activate",
+    tab: "select",
+    checkbox: "toggle",
+    radio: "select",
+    switch: "toggle",
+    option: "select",
+    combobox: "select",
+    textbox: "input",
+    searchbox: "input",
+    slider: "input",
+    menuitemcheckbox: "toggle",
+    menuitemradio: "select"
+  };
+  const INPUT_KIND = {
+    submit: "submit",
+    button: "activate",
+    reset: "activate",
+    checkbox: "toggle",
+    radio: "select",
+    file: "input"
+  };
+
+  function domPath(el) {
+    const parts = [];
+    let n = el;
+    while (n && n.nodeType === 1 && parts.length < 12) {
+      let p = n.tagName.toLowerCase();
+      if (n.id) {
+        parts.unshift(p + "#" + n.id);
+        break;
+      }
+      const parent = n.parentElement;
+      if (parent) {
+        const sibs = Array.from(parent.children).filter((c) => c.tagName === n.tagName);
+        if (sibs.length > 1) p += ":nth-of-type(" + (sibs.indexOf(n) + 1) + ")";
+      }
+      parts.unshift(p);
+      n = n.parentElement;
+    }
+    return parts.join(" > ");
+  }
+
+  // Approximation of the accessible name. The real algorithm is far larger,
+  // and the full accessibility tree is not reachable from an extension without
+  // chrome.debugger, which shows a "being debugged" banner.
+  function accessibleName(el) {
+    const aria = el.getAttribute("aria-label");
+    if (aria && aria.trim()) return aria.trim();
+    const labelledby = el.getAttribute("aria-labelledby");
+    if (labelledby) {
+      const parts = labelledby
+        .split(/\s+/)
+        .map((id) => document.getElementById(id))
+        .filter(Boolean)
+        .map((n) => (n.innerText || "").trim());
+      if (parts.length) return parts.join(" ").trim();
+    }
+    if (el.id) {
+      const lab = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (lab && lab.innerText.trim()) return lab.innerText.trim();
+    }
+    const closestLabel = el.closest && el.closest("label");
+    if (closestLabel && closestLabel.innerText.trim()) return closestLabel.innerText.trim();
+    for (const attr of ["title", "placeholder", "alt", "value", "name"]) {
+      const v = el.getAttribute && el.getAttribute(attr);
+      if (v && v.trim()) return v.trim();
+    }
+    const text = (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ");
+    return text.slice(0, 80);
+  }
+
+  function isDisabled(el) {
+    if (el.disabled === true) return true;
+    if (el.getAttribute("aria-disabled") === "true") return true;
+    return false;
+  }
+
+  function classify(el) {
+    const tag = el.tagName;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    const evidence = {};
+    let kind = null;
+
+    if (tag === "INPUT") {
+      const t = (el.getAttribute("type") || "text").toLowerCase();
+      if (t !== "hidden") {
+        evidence.nativeDom = true;
+        kind = INPUT_KIND[t] || "input";
+      }
+    } else if (tag === "A") {
+      if (el.hasAttribute("href")) {
+        evidence.nativeDom = true;
+        kind = "navigate";
+      }
+    } else if (NATIVE[tag]) {
+      evidence.nativeDom = true;
+      kind = NATIVE[tag];
+    } else if (tag === "FORM") {
+      return null; // the submit control is the action, not the form
+    }
+
+    if (role && ARIA_KIND[role]) {
+      evidence.accessibility = true;
+      kind = kind || ARIA_KIND[role];
+    }
+
+    if (el.isContentEditable) {
+      evidence.nativeDom = true;
+      kind = kind || "input";
+    }
+
+    const tabindex = el.getAttribute("tabindex");
+    if (tabindex !== null && Number(tabindex) >= 0) evidence.focusable = true;
+
+    for (const a of ["onclick", "onchange", "onsubmit", "oninput"]) {
+      if (el.hasAttribute(a)) {
+        evidence.inlineHandler = true;
+        kind = kind || (a === "onsubmit" ? "submit" : "activate");
+      }
+    }
+
+    if (!kind && (evidence.focusable || evidence.inlineHandler)) kind = "activate";
+
+    if (!kind) {
+      // Last resort: styled as clickable. Weak on its own, and common on
+      // decorative elements, so it only qualifies with visible text.
+      const cursor = getComputedStyle(el).cursor;
+      const label = (el.innerText || "").trim();
+      if (cursor === "pointer" && label && label.length < 120) {
+        evidence.pointerCursor = true;
+        kind = "activate";
+      }
+    }
+
+    if (!kind) return null;
+
+    // Weighted so that a single weak signal cannot look confident.
+    let confidence = 0;
+    if (evidence.nativeDom) confidence += 0.75;
+    if (evidence.accessibility) confidence += 0.55;
+    if (evidence.inlineHandler) confidence += 0.35;
+    if (evidence.focusable) confidence += 0.2;
+    if (evidence.pointerCursor) confidence += 0.15;
+    confidence = Math.min(1, Math.round(confidence * 100) / 100);
+
+    return { kind, evidence, confidence, role };
+  }
+
+  function visible(el) {
+    if (!el.getClientRects || el.getClientRects().length === 0) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== "hidden" && st.display !== "none";
+  }
+
+  const actions = [];
+  const queue = [document.body];
+
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node) continue;
+    if (stats.nodesVisited >= maxNodes) {
+      stats.truncated = true;
+      break;
+    }
+    stats.nodesVisited++;
+
+    if (node.tagName === "IFRAME" || node.tagName === "FRAME") {
+      // Cross-document scanning needs its own injection and a security story;
+      // out of scope rather than silently partial.
+      stats.iframesSkipped++;
+      continue;
+    }
+
+    if (node.nodeType === 1 && node !== document.body && visible(node)) {
+      const c = classify(node);
+      if (c) {
+        actions.push({
+          id: "a" + actions.length,
+          label: accessibleName(node) || node.tagName.toLowerCase(),
+          kind: c.kind,
+          evidence: c.evidence,
+          enabled: !isDisabled(node),
+          confidence: c.confidence,
+          domExposure: {
+            domPath: domPath(node),
+            tagName: node.tagName.toLowerCase(),
+            role: c.role || undefined,
+            accessibleName: accessibleName(node) || undefined
+          }
+        });
+      }
+    }
+
+    if (node.shadowRoot) {
+      stats.shadowRootsTraversed++;
+      for (const child of node.shadowRoot.children) queue.push(child);
+    }
+    if (node.children) for (const child of node.children) queue.push(child);
+  }
+
+  stats.actionsFound = actions.length;
+  stats.durationMs = Date.now() - started;
+
+  return {
+    title: document.title,
+    url: location.href,
+    kind: "surface",
+    actions,
+    stats,
+    capturedAt: new Date().toISOString()
+  };
+}
+
 // ---- watch kit: multiple named element watchers, each diffed independently ----
 //
 // Installed once per tab. Keeps a registry on window so it survives service
@@ -352,6 +596,22 @@ async function activatePicker(tabId) {
 }
 
 const WATCH_INTERVAL_MS = 5000;
+// Bounded so a pathological page degrades to a truncated scan rather than
+// hanging the tab. Reported in stats.truncated when hit.
+const SCAN_MAX_NODES = 20000;
+
+/** Inventory the page's interactive surface and send it to the bridge. */
+async function scanSurface_(tabId) {
+  const tab = await resolveTab(tabId);
+  if (!tab) return { ok: false };
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: scanSurface,
+    args: [SCAN_MAX_NODES]
+  });
+  const res = await postToBridge(result);
+  return { ok: res.ok, stats: result && result.stats };
+}
 
 async function resolveTab(tabId) {
   const tab = tabId
@@ -402,6 +662,7 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === "send-page") sendCurrentTab();
   if (command === "pick-element") activatePicker();
   if (command === "toggle-watch") addWatchTarget();
+  if (command === "scan-surface") scanSurface_();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -423,6 +684,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.type === "agenteyes-popup-add-watch") {
     addWatchTarget().then((result) => sendResponse(result));
+    return true;
+  }
+
+  if (message?.type === "agenteyes-popup-scan-surface") {
+    scanSurface_().then((result) => sendResponse(result));
     return true;
   }
 
@@ -464,6 +730,11 @@ chrome.runtime.onInstalled.addListener(() => {
     title: "AgentEyes: watch this element\u2026",
     contexts: ["all"]
   });
+  chrome.contextMenus.create({
+    id: "agenteyes-scan-surface",
+    title: "AgentEyes: scan interactive surface",
+    contexts: ["all"]
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -471,4 +742,5 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "agenteyes-send-page") sendCurrentTab(tab.id);
   if (info.menuItemId === "agenteyes-pick-element") activatePicker(tab.id);
   if (info.menuItemId === "agenteyes-toggle-watch") addWatchTarget(tab.id);
+  if (info.menuItemId === "agenteyes-scan-surface") scanSurface_(tab.id);
 });

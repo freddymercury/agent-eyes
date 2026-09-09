@@ -28,6 +28,17 @@ document.getElementById("add-watch").addEventListener("click", async () => {
   window.close();
 });
 
+document.getElementById("scan-surface").addEventListener("click", async () => {
+  setStatus("scanning\u2026");
+  const res = await chrome.runtime.sendMessage({ type: "agenteyes-popup-scan-surface" });
+  if (!res?.ok) {
+    setStatus("failed — is the server running?", "err");
+    return;
+  }
+  const s = res.stats || {};
+  setStatus(`${s.actionsFound} actions, ${s.durationMs}ms${s.truncated ? " (truncated)" : ""}`, "ok");
+});
+
 function renderWatchers(watchers) {
   const box = document.getElementById("watchers");
   const clear = document.getElementById("clear");

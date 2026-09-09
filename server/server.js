@@ -22,6 +22,9 @@ const CAPTURES_DIR = path.join(DIR, "captures");
 // One file per named watcher, so several watchers on the same page don't
 // overwrite each other the way the single context.json does.
 const WATCH_DIR = path.join(DIR, "watch");
+// Latest interactive-surface scan. Overwritten rather than appended: it is a
+// current-state file, like context.json, not a history.
+const SURFACE_FILE = path.join(DIR, "surface.json");
 
 if (!fs.existsSync(DIR)) fs.mkdirSync(DIR, { recursive: true });
 if (!fs.existsSync(CAPTURES_DIR)) fs.mkdirSync(CAPTURES_DIR, { recursive: true });
@@ -82,6 +85,10 @@ function toMarkdown(data) {
   ].join("\n");
 }
 
+function writeSurface(data) {
+  fs.writeFileSync(SURFACE_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
 function writeWatcher(data) {
   // Named watchers get their own stable file and are *not* appended to the
   // capture history — they fire every few seconds and would flood it.
@@ -129,7 +136,15 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         latest = data;
-        if (data.watchId) {
+        if (data.kind === "surface") {
+          writeSurface(data);
+          const st = data.stats || {};
+          console.log(
+            `[agenteyes] surface scan: ${st.actionsFound} actions, ` +
+              `${st.nodesVisited} nodes, ${st.durationMs}ms` +
+              (st.truncated ? " (TRUNCATED)" : "")
+          );
+        } else if (data.watchId) {
           writeWatcher(data);
           console.log(`[agenteyes] watch ${data.watchId} "${data.label}" (${data.text.length} chars)`);
         } else {
@@ -147,6 +162,13 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && req.url === "/context") {
     if (!latest) return send(res, 404, JSON.stringify({ ok: false, error: "no page sent yet" }));
     return send(res, 200, JSON.stringify(latest));
+  }
+
+  if (req.method === "GET" && req.url === "/surface") {
+    if (!fs.existsSync(SURFACE_FILE)) {
+      return send(res, 404, JSON.stringify({ ok: false, error: "no surface scan yet" }));
+    }
+    return send(res, 200, fs.readFileSync(SURFACE_FILE, "utf8"));
   }
 
   if (req.method === "GET" && req.url === "/watch") {
@@ -170,7 +192,7 @@ const server = http.createServer((req, res) => {
       200,
       JSON.stringify({
         status: "running",
-        endpoints: ["POST /context", "GET /context", "GET /context.md", "GET /watch"],
+        endpoints: ["POST /context", "GET /context", "GET /context.md", "GET /watch", "GET /surface"],
         file: JSON_FILE,
         capturesDir: CAPTURES_DIR
       })
