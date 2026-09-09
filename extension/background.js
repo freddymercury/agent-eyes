@@ -1080,6 +1080,37 @@ async function activatePicker(tabId) {
 }
 
 const WATCH_INTERVAL_MS = 5000;
+
+// Which tab each watcher belongs to.
+//
+// Watchers run in the page, so nothing in the page can report its own death:
+// closing the tab kills the timer mid-tick and the capture file is left behind
+// looking live. The service worker outlives the page and can see tab
+// lifecycle, so ownership is tracked here and retired from here.
+const watcherTabs = new Map();
+
+function rememberWatcher(tabId, watchId, label) {
+  const forTab = watcherTabs.get(tabId) || new Map();
+  forTab.set(watchId, label);
+  watcherTabs.set(tabId, forTab);
+}
+
+/** Tell the bridge these watchers are finished. Best effort by design. */
+async function retireWatchers(tabId, reason) {
+  const forTab = watcherTabs.get(tabId);
+  if (!forTab || !forTab.size) return;
+  watcherTabs.delete(tabId);
+  for (const [watchId, label] of forTab) {
+    await postToBridge({
+      watchId,
+      label,
+      removed: true,
+      reason,
+      capturedAt: new Date().toISOString()
+    });
+  }
+  console.log(`AgentEyes: retired ${forTab.size} watcher(s) — ${reason}`);
+}
 // Bounded so a pathological page degrades to a truncated scan rather than
 // hanging the tab. Reported in stats.truncated when hit.
 const SCAN_MAX_NODES = 20000;
@@ -1245,6 +1276,17 @@ async function watchKit(tabId, method, arg) {
 
 // ---- wiring ----
 
+// A closed tab takes its watchers with it.
+chrome.tabs.onRemoved.addListener((tabId) => retireWatchers(tabId, "tab closed"));
+
+// So does navigating away: the page context is replaced, the timers are gone,
+// and any element the watchers were bound to no longer exists.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading" && changeInfo.url) {
+    retireWatchers(tabId, "navigated away");
+  }
+});
+
 chrome.commands.onCommand.addListener((command) => {
   if (command === "send-page") sendCurrentTab();
   if (command === "pick-element") activatePicker();
@@ -1269,6 +1311,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "agenteyes-watcher-added") {
+    if (sender?.tab?.id && message.data?.id) {
+      rememberWatcher(sender.tab.id, message.data.id, message.data.label);
+    }
     chrome.action.setBadgeText({ text: "\u25CF" });
     chrome.action.setBadgeBackgroundColor({ color: "#4FD8C4" });
     return;

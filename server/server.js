@@ -37,6 +37,12 @@ const TRASH_DIR = path.join(DIR, "snapshots", ".trash");
 // The hashes each watchpoint had when the baseline was marked. Everything a
 // watchpoint asserts is relative to this.
 const BASELINE_FILE = path.join(DIR, "watch-baseline.json");
+
+// A watcher that has stopped reporting is not a watcher, whatever its file
+// says. Tombstones are best-effort — a browser crash, a disabled extension or
+// a killed tab can all skip them — so silence itself has to be the signal.
+const WATCH_STALE_SECONDS = Number(process.env.AGENT_EYES_WATCH_STALE || 60);
+const WATCH_EXPIRE_SECONDS = Number(process.env.AGENT_EYES_WATCH_EXPIRE || 900);
 // Latest interactive-surface scan. Overwritten rather than appended: it is a
 // current-state file, like context.json, not a history.
 const SURFACE_FILE = path.join(DIR, "surface.json");
@@ -126,6 +132,36 @@ function writeSurface(data) {
   fs.writeFileSync(SURFACE_FILE, JSON.stringify(data, null, 2), "utf8");
 }
 
+function watcherAgeSeconds(data) {
+  const t = Date.parse(data && data.capturedAt);
+  return Number.isNaN(t) ? Infinity : (Date.now() - t) / 1000;
+}
+
+/**
+ * Delete watcher files nobody is feeding any more.
+ *
+ * Without this the directory only grows, and every consumer has to invent its
+ * own staleness rule — which is how a frozen watcher went on driving
+ * recommendations for five rounds of a live draft.
+ */
+function sweepWatchers() {
+  let removed = 0;
+  for (const f of fs.readdirSync(WATCH_DIR)) {
+    if (!f.endsWith(".json") || f === "latest.json") continue;
+    const p = path.join(WATCH_DIR, f);
+    try {
+      if (watcherAgeSeconds(JSON.parse(fs.readFileSync(p, "utf8"))) > WATCH_EXPIRE_SECONDS) {
+        fs.unlinkSync(p);
+        removed++;
+      }
+    } catch {
+      fs.unlinkSync(p); // unreadable is not useful either
+      removed++;
+    }
+  }
+  if (removed) console.log(`[agenteyes] swept ${removed} expired watcher(s)`);
+}
+
 function writeWatcher(data) {
   // Named watchers get their own stable file and are *not* appended to the
   // capture history — they fire every few seconds and would flood it.
@@ -194,6 +230,17 @@ const server = http.createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         latest = data;
+        if (data.watchId && data.removed) {
+          // Retired deliberately — by the popup, or by the worker noticing its
+          // tab closed. Remove the file rather than leaving a tombstone that
+          // every reader must learn to recognise.
+          for (const f of fs.readdirSync(WATCH_DIR)) {
+            if (f.startsWith(`${data.watchId}_`)) fs.unlinkSync(path.join(WATCH_DIR, f));
+          }
+          console.log(`[agenteyes] watcher ${data.watchId} retired: ${data.reason || "removed"}`);
+          return send(res, 200, JSON.stringify({ ok: true, retired: data.watchId }));
+        }
+
         if (data.kind === "surface") {
           writeSurface(data);
           const st = data.stats || {};
@@ -331,13 +378,22 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/watch") {
-    return send(res, 200, JSON.stringify({
-      ok: true,
-      watchers: Array.from(watchers.values()).map((w) => ({
-        watchId: w.watchId, label: w.label, selector: w.selector,
-        capturedAt: w.capturedAt, chars: (w.text || "").length
-      }))
-    }));
+    sweepWatchers();
+    // Report staleness rather than making every consumer derive it.
+    const live = [];
+    for (const f of fs.readdirSync(WATCH_DIR)) {
+      if (!f.endsWith(".json") || f === "latest.json") continue;
+      try {
+        const w = JSON.parse(fs.readFileSync(path.join(WATCH_DIR, f), "utf8"));
+        const age = watcherAgeSeconds(w);
+        live.push({
+          watchId: w.watchId, label: w.label, selector: w.selector,
+          capturedAt: w.capturedAt, chars: (w.text || "").length,
+          ageSeconds: Math.round(age), stale: age > WATCH_STALE_SECONDS
+        });
+      } catch { /* skip unreadable */ }
+    }
+    return send(res, 200, JSON.stringify({ ok: true, staleAfterSeconds: WATCH_STALE_SECONDS, watchers: live }));
   }
 
   if (req.method === "GET" && req.url === "/context.md") {

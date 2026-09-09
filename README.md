@@ -40,9 +40,27 @@ a watch list and re-sent whenever its text changes. Name it when prompted. Add
 as many as you like — a list and a roster, say — and each gets its own file. The
 popup shows them all with a **×** to remove one, or "Remove all".
 
-A red dot next to a watcher means its selector stopped matching: the page
-re-rendered that element away, so re-pick it. Watchers live in the page, so
-closing the tab stops them.
+A red dot next to a watcher means it is no longer useful — either its selector
+stopped matching, or it has gone quiet.
+
+### Watcher lifecycle
+
+Watchers run in the page, so nothing in the page can report its own death:
+closing a tab kills the timer mid-tick and leaves a capture file behind that
+looks live. Three things keep that from becoming your problem:
+
+- **The extension retires them.** The service worker outlives the page, tracks
+  which tab each watcher belongs to, and retires them on tab close or
+  navigation.
+- **The server sweeps.** Any watcher silent for 15 minutes is deleted, and
+  `GET /watch` reports `stale: true` past 60 seconds. Tombstones are
+  best-effort — a browser crash or a disabled extension skips them — so
+  silence itself is treated as the signal.
+- **Consumers are told, not left to guess.** Staleness is reported rather than
+  derived, so each tool does not invent its own rule. One that did read a
+  frozen watcher as current for five rounds of a live draft.
+
+Tunable with `AGENT_EYES_WATCH_STALE` and `AGENT_EYES_WATCH_EXPIRE`, in seconds.
 
 The icon flashes a teal check on success, red `!` if it failed (usually means the server isn't running).
 

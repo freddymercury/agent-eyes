@@ -166,9 +166,10 @@ function renderWatchers(watchers) {
     row.className = "w";
 
     const dot = document.createElement("span");
-    // A dead dot means the selector no longer matches — the page re-rendered
-    // that element away, so re-pick it.
-    dot.className = "dot" + (w.alive ? "" : " dead");
+    // Red covers both ways a watcher stops being useful: its element vanished,
+    // or it has gone quiet. Either way the data it last sent is not current.
+    dot.className = "dot" + (w.alive && !w.stale ? "" : " dead");
+    dot.title = !w.alive ? "element no longer matches" : w.stale ? "not reporting" : "live";
     row.appendChild(dot);
 
     const nm = document.createElement("span");
