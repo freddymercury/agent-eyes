@@ -63,3 +63,44 @@ test("a truncated scan is always flagged as partial", () => {
   const w = comparabilityWarnings(meta(), t);
   expect(w.some((x) => x.includes("truncated"))).toBe(true);
 });
+
+test("a snapshot's url describes the actions it contains", async () => {
+  // saveSnapshot took context from the freshest watcher, so a stale watcher or
+  // an old context.json could label a snapshot with a page it never scanned.
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "agenteyes-url-"));
+  await mkdir(join(root, "watch"), { recursive: true });
+
+  // a watcher pointing at one page...
+  await writeFile(
+    join(root, "watch", "w1_stale.json"),
+    JSON.stringify({ watchId: "w1", label: "stale", title: "Stale", url: "https://stale.test", text: "x", capturedAt: new Date().toISOString() }),
+  );
+  // ...while the scan is of another
+  await writeFile(
+    join(root, "surface.json"),
+    JSON.stringify({
+      kind: "surface", title: "Real Page", url: "https://real.test/app",
+      capturedAt: new Date().toISOString(), actions: [],
+      stats: { nodesVisited: 1, actionsFound: 0, durationMs: 1, truncated: false, shadowRootsTraversed: 0, iframesSkipped: 0 },
+    }),
+  );
+
+  const prev = process.env.AGENT_EYES_DIR;
+  process.env.AGENT_EYES_DIR = root;
+  try {
+    // Re-import with the overridden directory so module-level paths pick it up.
+    const mod = await import(`../src/source.ts?url-test=${Date.now()}`);
+    const scan = await mod.readSurfaceScan();
+    expect(scan.url).toBe("https://real.test/app");
+    const ctx = await mod.readContext();
+    // readContext still prefers the watcher — which is exactly why saveSnapshot
+    // must not use it when a scan exists.
+    expect(ctx.url).toBe("https://stale.test");
+  } finally {
+    process.env.AGENT_EYES_DIR = prev;
+    await rm(root, { recursive: true, force: true });
+  }
+});

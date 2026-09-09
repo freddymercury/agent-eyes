@@ -243,7 +243,20 @@ export async function saveSnapshot(
   release?: SnapshotMeta["release"],
   notes?: string,
 ): Promise<{ ok: boolean; meta?: SnapshotMeta; error?: string }> {
-  const [ctx, watchers, scan] = await Promise.all([readContext(), readWatchers(), readSurfaceScan()]);
+  const [fallbackCtx, watchers, scan] = await Promise.all([
+    readContext(),
+    readWatchers(),
+    readSurfaceScan(),
+  ]);
+
+  // The scan is what is being snapshotted, so its page identifies the snapshot.
+  // Taking the url from the freshest watcher or from context.json instead can
+  // record a page that has nothing to do with the actions stored alongside it,
+  // which would make two snapshots look like the same page — or different ones
+  // — on evidence that never matched their contents.
+  const ctx = scan
+    ? { url: scan.url, title: scan.title, capturedAt: scan.capturedAt }
+    : fallbackCtx;
   if (!ctx) return { ok: false, error: "nothing captured yet — scan or watch a page first" };
 
   const actions = scan?.actions ?? [];
