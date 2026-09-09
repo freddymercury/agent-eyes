@@ -34,6 +34,9 @@ const WATCH_DIR = path.join(DIR, "watch");
 // longer confined to the browser profile.
 const SNAP_DIR = path.join(DIR, "snapshots");
 const TRASH_DIR = path.join(DIR, "snapshots", ".trash");
+// The hashes each watchpoint had when the baseline was marked. Everything a
+// watchpoint asserts is relative to this.
+const BASELINE_FILE = path.join(DIR, "watch-baseline.json");
 // Latest interactive-surface scan. Overwritten rather than appended: it is a
 // current-state file, like context.json, not a history.
 const SURFACE_FILE = path.join(DIR, "surface.json");
@@ -298,6 +301,35 @@ const server = http.createServer((req, res) => {
     return send(res, 200, fs.readFileSync(SURFACE_FILE, "utf8"));
   }
 
+  if (req.method === "POST" && req.url === "/watch/baseline") {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        const baseline = { markedAt: new Date().toISOString(), watchpoints: JSON.parse(body || "{}") };
+        fs.writeFileSync(BASELINE_FILE, JSON.stringify(baseline, null, 2), "utf8");
+        const n = Object.keys(baseline.watchpoints).length;
+        console.log(`[agenteyes] baseline marked for ${n} watchpoint(s)`);
+        send(res, 200, JSON.stringify({ ok: true, markedAt: baseline.markedAt, count: n }));
+      } catch (err) {
+        send(res, 400, JSON.stringify({ ok: false, error: String(err) }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === "GET" && req.url === "/watch/baseline") {
+    if (!fs.existsSync(BASELINE_FILE)) {
+      return send(res, 404, JSON.stringify({ ok: false, error: "no baseline marked" }));
+    }
+    return send(res, 200, fs.readFileSync(BASELINE_FILE, "utf8"));
+  }
+
+  if (req.method === "DELETE" && req.url === "/watch/baseline") {
+    if (fs.existsSync(BASELINE_FILE)) fs.unlinkSync(BASELINE_FILE);
+    return send(res, 200, JSON.stringify({ ok: true }));
+  }
+
   if (req.method === "GET" && req.url === "/watch") {
     return send(res, 200, JSON.stringify({
       ok: true,
@@ -322,6 +354,7 @@ const server = http.createServer((req, res) => {
         endpoints: [
           "POST /context", "GET /context", "GET /context.md", "GET /watch", "GET /surface",
           "POST /snapshot", "GET /snapshots", "GET /snapshot/:id", "DELETE /snapshot/:id",
+          "POST /watch/baseline", "GET /watch/baseline", "DELETE /watch/baseline",
         ],
         file: JSON_FILE,
         capturesDir: CAPTURES_DIR

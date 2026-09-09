@@ -80,7 +80,30 @@ function startElementPicker(mode) {
       // so several watchers on the same page stay tellable apart.
       const suggested = describeEl(currentEl).slice(0, 40);
       const label = window.prompt("Label for this watcher:", suggested) || suggested;
-      const added = window.__agentEyes && window.__agentEyes.add(currentEl, label);
+      // Optional on purpose: a watchpoint with no expectation observes without
+      // asserting, and should not be forced into a claim the user has not made.
+      const exp = (
+        window.prompt(
+          "Expectation for \"" + label + "\"?\n\n" +
+            "  changes  - this must move when the action runs\n" +
+            "  stable   - this must NOT move\n" +
+            "  (blank)  - just observe\n",
+          ""
+        ) || ""
+      ).trim().toLowerCase();
+      const expectation = exp === "changes" || exp === "stable" ? exp : null;
+      const modes = (
+        window.prompt(
+          "Watch which aspects? (comma separated)\n\n" +
+            "  text, structure, attributes, state\n",
+          "text"
+        ) || "text"
+      )
+        .split(",")
+        .map((m) => m.trim().toLowerCase())
+        .filter((m) => ["text", "structure", "attributes", "state"].indexOf(m) >= 0);
+      const added =
+        window.__agentEyes && window.__agentEyes.add(currentEl, label, expectation, modes);
       chrome.runtime.sendMessage({ type: "agenteyes-watcher-added", data: added });
       cleanup();
       return;
@@ -657,19 +680,114 @@ function installWatchKit(bridgeUrl, intervalMs) {
     return h;
   }
 
+  // Attributes worth watching. Deliberately not "all attributes": frameworks
+  // rewrite class and style constantly, and a watchpoint that fires on every
+  // re-render asserts nothing.
+  const WATCHED_ATTRS = ["href", "src", "value", "title", "alt", "placeholder", "type", "name"];
+  const STATE_ATTRS = [
+    "aria-expanded", "aria-checked", "aria-selected", "aria-disabled",
+    "aria-pressed", "aria-current", "aria-invalid", "aria-busy", "disabled", "open", "checked"
+  ];
+
+  /**
+   * Observe one element four ways, so a report can say *what* moved rather
+   * than only that something did.
+   *
+   *   text       — what it says
+   *   structure  — the shape of its subtree, ignoring content
+   *   attributes — meaningful attributes, ignoring styling
+   *   state      — the ARIA and form state that expresses interactivity
+   */
+  function observeElement(el) {
+    const text = el.innerText || "";
+
+    const shape = [];
+    const walk = (node, depth) => {
+      if (depth > 8 || shape.length > 4000) return;
+      for (const c of node.children) {
+        shape.push(depth + ":" + c.tagName + ":" + (c.getAttribute("role") || ""));
+        walk(c, depth + 1);
+      }
+    };
+    walk(el, 0);
+
+    const attrs = [];
+    const collectAttrs = (node, depth) => {
+      if (depth > 6) return;
+      for (const a of WATCHED_ATTRS) {
+        if (node.hasAttribute && node.hasAttribute(a)) attrs.push(a + "=" + node.getAttribute(a));
+      }
+      for (const c of node.children) collectAttrs(c, depth + 1);
+    };
+    collectAttrs(el, 0);
+
+    const state = [];
+    const collectState = (node, depth) => {
+      if (depth > 6) return;
+      for (const a of STATE_ATTRS) {
+        if (node.hasAttribute && node.hasAttribute(a)) state.push(a + "=" + node.getAttribute(a));
+      }
+      if (node.tagName === "INPUT" || node.tagName === "SELECT" || node.tagName === "TEXTAREA") {
+        state.push(node.tagName + ".value=" + (node.value || ""));
+        if (node.checked !== undefined) state.push(node.tagName + ".checked=" + node.checked);
+      }
+      for (const c of node.children) collectState(c, depth + 1);
+    };
+    collectState(el, 0);
+
+    return {
+      text: text.slice(0, 200000),
+      hashes: {
+        text: String(hash(text)),
+        structure: String(hash(shape.join("|"))),
+        attributes: String(hash(attrs.join("|"))),
+        state: String(hash(state.join("|")))
+      }
+    };
+  }
+
+  const ROLE_TAGS = {
+    button: "button", link: "a[href]", textbox: "input,textarea",
+    combobox: "select", list: "ul,ol", table: "table", region: "section", main: "main"
+  };
+  const roleTagHint = (r) => ROLE_TAGS[r] || "*";
+
+  function implicitRole(el) {
+    if (el.tagName === "BUTTON") return "button";
+    if (el.tagName === "A" && el.hasAttribute("href")) return "link";
+    if (el.tagName === "TABLE") return "table";
+    if (el.tagName === "MAIN") return "main";
+    return "";
+  }
+
+  function watchAccessibleName(el) {
+    const aria = el.getAttribute && el.getAttribute("aria-label");
+    if (aria && aria.trim()) return aria.trim().slice(0, 80);
+    const t = (el.innerText || "").trim().replace(/\s+/g, " ");
+    return t.slice(0, 80);
+  }
+
   const registry = {
     bridgeUrl,
     intervalMs,
     nextId: 1,
     watchers: new Map(),
 
-    add(el, label) {
+    add(el, label, expectation, observe) {
       const id = "w" + registry.nextId++;
       const selector = cssPath(el);
+      // Record a semantic target too. A CSS path breaks the moment the page
+      // re-wraps the element; role plus accessible name usually survives it.
+      const role = (el.getAttribute("role") || "").toLowerCase() || implicitRole(el);
+      const accessibleName = watchAccessibleName(el);
       const w = {
         id,
         label: label || (el.tagName.toLowerCase() + (el.id ? "#" + el.id : "")),
         selector,
+        role,
+        accessibleName,
+        expectation: expectation || null,
+        observe: observe && observe.length ? observe : ["text"],
         el,
         last: null,
         sent: 0,
@@ -682,7 +800,7 @@ function installWatchKit(bridgeUrl, intervalMs) {
       w.timer = setInterval(() => registry.tick(id), registry.intervalMs);
       registry.watchers.set(id, w);
       registry.tick(id);
-      return { id: w.id, label: w.label, selector: w.selector };
+      return { id: w.id, label: w.label, selector: w.selector, expectation: w.expectation, observe: w.observe };
     },
 
     remove(id) {
@@ -723,6 +841,8 @@ function installWatchKit(bridgeUrl, intervalMs) {
         id: w.id,
         label: w.label,
         selector: w.selector,
+        expectation: w.expectation,
+        observe: w.observe,
         sent: w.sent,
         failed: w.failed,
         alive: !!registry.resolve(w)
@@ -737,6 +857,19 @@ function installWatchKit(bridgeUrl, intervalMs) {
         el = null;
       }
       if (!el && w.el && w.el.isConnected) el = w.el;
+      // Last resort: find it again by what it is rather than where it was.
+      // A re-render moves an element without changing its role or its name.
+      if (!el && w.accessibleName) {
+        const candidates = document.querySelectorAll(
+          w.role ? `[role="${w.role}"], ${roleTagHint(w.role)}` : "*"
+        );
+        for (const c of candidates) {
+          if (watchAccessibleName(c) === w.accessibleName) {
+            el = c;
+            break;
+          }
+        }
+      }
       return el;
     },
 
@@ -749,18 +882,20 @@ function installWatchKit(bridgeUrl, intervalMs) {
         // quiet, which is indistinguishable from a page that just isn't changing.
         if (w.last !== null) {
           w.last = null;
-          registry.report(w, "", false);
+          registry.report(w, "", false, {});
         }
         return;
       }
-      const text = el.innerText || "";
-      const h = hash(text);
-      if (h === w.last) return;
-      w.last = h;
-      await registry.report(w, text, true);
+      const obs = observeElement(el);
+      // Only the aspects this watchpoint observes decide whether it changed;
+      // watching text should not fire because a class attribute moved.
+      const key = (w.observe || ["text"]).map((m) => obs.hashes[m]).join("|");
+      if (key === w.last) return;
+      w.last = key;
+      await registry.report(w, obs.text, true, obs.hashes);
     },
 
-    async report(w, text, alive) {
+    async report(w, text, alive, hashes) {
       w.revision++;
       try {
         const res = await fetch(registry.bridgeUrl, {
@@ -776,6 +911,11 @@ function installWatchKit(bridgeUrl, intervalMs) {
             selector: w.selector,
             alive,
             revision: w.revision,
+            role: w.role,
+            accessibleName: w.accessibleName,
+            expectation: w.expectation,
+            observe: w.observe,
+            hashes: hashes || {},
             text: text.slice(0, 200000),
             capturedAt: new Date().toISOString()
           })

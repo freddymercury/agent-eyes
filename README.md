@@ -135,6 +135,48 @@ silently trusted.
 Same-origin iframes are skipped and counted rather than silently omitted. Scans
 stop after 20,000 nodes and report `truncated: true` instead of hanging the tab.
 
+### Watchpoints with expectations
+
+A watchpoint asserts what an action did. Pick an element with **Cmd+Shift+Y**,
+name it, and say what you expect of it:
+
+- **changes** — this must move when the action runs. An effect that did not
+  happen is the usual bug.
+- **stable** — this must *not* move. Catches the change nobody asked for, which
+  is the kind a test suite normally misses entirely.
+- **blank** — observe without asserting.
+
+Choose what to watch: `text`, `structure`, `attributes`, `state`. Only the
+aspects you name decide whether it changed, so watching text does not fire
+because a class attribute moved. `attributes` and `state` deliberately exclude
+`class` and `style` — frameworks rewrite those constantly, and a watchpoint that
+fires on every re-render asserts nothing.
+
+```bash
+bun run watch baseline   # before the action
+bun run watch check      # after it
+```
+
+```
+  PASS  cart-total  (expects changes)
+         changed as expected: text
+  FAIL  nav-menu  (expects stable)
+         expected no change, but text moved
+    ?   sidebar  (observing)
+         observed a change in text
+```
+
+A watchpoint with no expectation is never a failure — it reports what moved and
+passes no judgement. A watchpoint whose element has vanished violates `stable`,
+but is `unknown` for `changes`, since whether disappearing counts as changing is
+genuinely unclear.
+
+Watchpoints resolve by CSS path first, then fall back to role and accessible
+name, so one survives the page re-wrapping the element around it.
+
+Also available over MCP as `agent_eyes_mark_baseline` and
+`agent_eyes_check_watchpoints`.
+
 ### Diffing snapshots
 
 ```bash

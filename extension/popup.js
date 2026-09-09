@@ -173,8 +173,10 @@ function renderWatchers(watchers) {
 
     const nm = document.createElement("span");
     nm.className = "nm";
-    nm.textContent = w.label;
-    nm.title = w.selector;
+    // Show what the watchpoint asserts, not just what it is called — an
+    // expectation nobody can see is one nobody will trust.
+    nm.textContent = w.label + (w.expectation ? ` · ${w.expectation}` : "");
+    nm.title = `${w.selector}\n${(w.observe || ["text"]).join(", ")}`;
     row.appendChild(nm);
 
     const ct = document.createElement("span");

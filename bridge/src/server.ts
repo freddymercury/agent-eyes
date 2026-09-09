@@ -8,6 +8,7 @@ import {
   DEFAULT_BRIDGE_CONFIG,
   comparabilityWarnings,
   diffSurfaces,
+  evaluateWatchpoint,
   snapshotUri,
   URI_ACTIONS,
   URI_SNAPSHOTS,
@@ -22,6 +23,8 @@ import {
   readStaleness,
   listSnapshots,
   readSnapshot,
+  markBaseline,
+  readBaseline,
   readSurfaceScan,
   saveSnapshot,
   readText,
@@ -364,6 +367,51 @@ export function createServer(config: BridgeConfig = DEFAULT_BRIDGE_CONFIG) {
       if (!x || !y) return json({ error: `no snapshot ${!x ? a : b}` });
       const warnings = comparabilityWarnings(x.meta, y.meta);
       return json({ comparable: warnings.length === 0, warnings });
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_mark_baseline",
+    {
+      title: "Mark the current watchpoint state as the baseline",
+      description:
+        "Record what every watchpoint looks like now. Do this before the action " +
+        "under test; check_watchpoints then reports what moved and whether that " +
+        "matched each watchpoint's expectation.",
+    },
+    async () => {
+      const r = await markBaseline();
+      return json(r.ok ? { markedAt: r.markedAt, watchpoints: r.count } : { error: r.error });
+    },
+  );
+
+  server.registerTool(
+    "agent_eyes_check_watchpoints",
+    {
+      title: "Check watchpoints against the baseline",
+      description:
+        "For each watchpoint: what moved since the baseline, and whether that met its " +
+        "expectation. A watchpoint expecting 'changes' that did not move is a failed " +
+        "effect; one expecting 'stable' that moved is an unintended side effect. " +
+        "Watchpoints with no expectation report what they observed without passing judgement.",
+    },
+    async () => {
+      const [watchers, baseline] = await Promise.all([readWatchers(), readBaseline()]);
+      const results = watchers.map((w) =>
+        evaluateWatchpoint(
+          w.descriptor,
+          baseline?.watchpoints[w.id],
+          w.state.hashes ?? { text: w.state.contentHash },
+          w.state.alive,
+        ),
+      );
+      return json({
+        baselineMarkedAt: baseline?.markedAt ?? null,
+        violations: results.filter((r) => r.verdict === "violated").length,
+        met: results.filter((r) => r.verdict === "met").length,
+        unknown: results.filter((r) => r.verdict === "unknown").length,
+        results,
+      });
     },
   );
 

@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { snapshotHealth } from "@agent-eyes/protocol";
 import type {
   Action,
+  Expectation,
+  ObserveMode,
+  ObservedHashes,
   ScanStats,
   SnapshotMeta,
   StoredSnapshot,
@@ -37,6 +40,11 @@ interface WatcherFile {
   revision?: number;
   alive?: boolean;
   removed?: boolean;
+  role?: string;
+  accessibleName?: string;
+  expectation?: Expectation;
+  observe?: ObserveMode[];
+  hashes?: ObservedHashes;
 }
 
 export interface Watcher {
@@ -83,12 +91,14 @@ export async function readWatchers(): Promise<Watcher[]> {
       descriptor: {
         id,
         name: d.label ?? id,
-        target: { selector: d.selector },
-        observe: ["text"],
+        target: { selector: d.selector, role: d.role, accessibleName: d.accessibleName },
+        observe: d.observe?.length ? d.observe : ["text"],
+        expectation: d.expectation,
       },
       state: {
         watchpointId: id,
         contentHash: contentHash(text),
+        hashes: d.hashes,
         text,
         capturedAt: d.capturedAt ?? "",
         ageSeconds: Math.round(ageOf(d.capturedAt)),
@@ -292,5 +302,44 @@ export async function saveSnapshot(
     return res.ok ? { ok: true, meta: body.meta } : { ok: false, error: body.error ?? `HTTP ${res.status}` };
   } catch (e) {
     return { ok: false, error: `cannot reach the AgentEyes server: ${(e as Error).message}` };
+  }
+}
+
+
+// --- watchpoint baselines ----------------------------------------------------
+
+export const BASELINE_FILE = join(AGENTEYES_DIR, "watch-baseline.json");
+
+export interface Baseline {
+  markedAt: string;
+  watchpoints: Record<string, ObservedHashes>;
+}
+
+export async function readBaseline(): Promise<Baseline | null> {
+  try {
+    return (await Bun.file(BASELINE_FILE).json()) as Baseline;
+  } catch {
+    return null;
+  }
+}
+
+/** Record what every watchpoint looks like now, as the thing to compare against. */
+export async function markBaseline(): Promise<{ ok: boolean; count: number; markedAt?: string; error?: string }> {
+  const watchers = await readWatchers();
+  const payload: Record<string, ObservedHashes> = {};
+  for (const w of watchers) payload[w.id] = w.state.hashes ?? { text: w.state.contentHash };
+  try {
+    const res = await fetch(`${SERVER_URL}/watch/baseline`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await res.json()) as { markedAt?: string; error?: string };
+    return res.ok
+      ? { ok: true, count: watchers.length, markedAt: body.markedAt }
+      : { ok: false, count: 0, error: body.error ?? `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, count: 0, error: `cannot reach the AgentEyes server: ${(e as Error).message}` };
   }
 }
