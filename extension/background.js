@@ -201,7 +201,11 @@ function scanSurface(maxNodes) {
     return (text || "")
       .toLowerCase()
       .replace(/\s+/g, " ")
-      .replace(/\d+/g, "N")
+      // Only counts and badges are volatile — "Cart (3)" becoming "Cart (4)"
+      // is not a capability change. Blanket digit replacement was wrong: it
+      // collapsed Amazon's "Under $50" and "Under $100" into one key, so
+      // genuinely different filters were separated only by position.
+      .replace(/[([]\s*\d[\d,.\skmb+]*\s*[)\]]/gi, "(N)")
       .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
       // Unicode-aware: an ASCII-only class silently empties every label on a
       // non-English UI, sending the whole page to positional identity, and
@@ -233,6 +237,38 @@ function scanSurface(maxNodes) {
       n = n.parentElement;
     }
     return parts.join(">");
+  }
+
+  /**
+   * Nearest enclosing container that has a distinctive name of its own.
+   *
+   * Product grids and feeds repeat identical controls — "Add to cart" once per
+   * card — and ordinals alone then carry the identity, which churns whenever
+   * the list reorders. The card usually has a heading or accessible name that
+   * does not move with position, so scoping to it turns a fragile ordinal into
+   * a stable key.
+   */
+  function containerName(el) {
+    let n = el.parentElement;
+    let hops = 0;
+    while (n && hops < 6) {
+      hops++;
+      const role = roleOf(n);
+      if (role === "listitem" || role === "article" || role === "row" || n.tagName === "LI" ||
+          n.tagName === "ARTICLE" || n.tagName === "TR") {
+        // Prefer an explicit label, else the container's first heading or link.
+        const own = n.getAttribute("aria-label");
+        if (own && own.trim()) return normalizeLabel(own);
+        const anchor = n.querySelector("h1,h2,h3,h4,[role=heading],a[href]");
+        if (anchor) {
+          const t = normalizeLabel(anchor.innerText || anchor.getAttribute("aria-label") || "");
+          if (t) return t.slice(0, 40);
+        }
+        return "";
+      }
+      n = n.parentElement;
+    }
+    return "";
   }
 
   function testIdOf(el) {
@@ -425,6 +461,7 @@ function scanSurface(maxNodes) {
         const name = boundedName(normalizeLabel(accessibleName(node)));
         const path = roleAncestorPath(node);
 
+        const container = containerName(node);
         let identityStrategy;
         let identityKey;
         if (testId) {
@@ -438,6 +475,10 @@ function scanSurface(maxNodes) {
           identityStrategy = "positional";
           identityKey = domPath(node);
         }
+
+        // Scope by container before counting ordinals, so repeated controls in
+        // distinct cards stop colliding in the first place.
+        if (container) identityKey = identityKey + "@" + container;
 
         const seen = (ordinals.get(identityKey) || 0);
         ordinals.set(identityKey, seen + 1);

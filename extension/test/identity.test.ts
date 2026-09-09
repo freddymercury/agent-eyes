@@ -146,3 +146,53 @@ test("identical long labels still collapse to an ordinal, as they should", () =>
   const scan = render(`<main><a href="/1">${long}</a><a href="/2">${long}</a></main>`);
   expect(scan.actions[1].ordinalDisambiguated).toBe(true);
 });
+
+test("repeated controls in a list are scoped by their card, not by position", () => {
+  // The shape that made eBay 35.5% ordinal-dependent: identical buttons, one
+  // per product. Ordinals alone churn whenever the grid reorders.
+  const scan = render(`<main><ul>
+    <li><h3>Blue widget</h3><button>Add to cart</button></li>
+    <li><h3>Red widget</h3><button>Add to cart</button></li>
+    <li><h3>Green widget</h3><button>Add to cart</button></li>
+  </ul></main>`);
+  const carts = scan.actions.filter((a: any) => a.label === "Add to cart");
+  expect(carts).toHaveLength(3);
+  // none should have needed an ordinal — the card name distinguishes them
+  expect(carts.every((a: any) => a.ordinalDisambiguated === false)).toBe(true);
+  expect(new Set(carts.map((a: any) => a.id)).size).toBe(3);
+});
+
+test("a reordered list keeps each item's identity", () => {
+  const item = (n: string) => `<li><h3>${n}</h3><button>Add to cart</button></li>`;
+  const before = render(`<main><ul>${item("Blue")}${item("Red")}${item("Green")}</ul></main>`);
+  const after = render(`<main><ul>${item("Green")}${item("Blue")}${item("Red")}</ul></main>`);
+  const idFor = (scan: any, card: string) => {
+    const key = scan.actions.find(
+      (a: any) => a.label === "Add to cart" && a.identityKey.includes(card.toLowerCase()),
+    );
+    return key?.id;
+  };
+  // Reordering the grid must not change which id belongs to which product.
+  for (const card of ["Blue", "Red", "Green"]) {
+    expect(idFor(before, card)).toBe(idFor(after, card));
+  }
+});
+
+test("meaningful numbers are kept; only counts and badges are normalized", () => {
+  // Amazon's price filters are entirely digits — collapsing them makes
+  // genuinely different capabilities collide.
+  const scan = render(`<main>
+    <a href="/1">Under $50</a>
+    <a href="/2">Under $100</a>
+    <a href="/3">Under $150</a>
+  </main>`);
+  const ids = scan.actions.map((a: any) => a.id);
+  expect(new Set(ids).size).toBe(3);
+  expect(scan.actions.every((a: any) => a.ordinalDisambiguated === false)).toBe(true);
+});
+
+test("a volatile count in parentheses still normalizes away", () => {
+  const a = render(`<main><button>Cart (3)</button></main>`).actions[0];
+  const b = render(`<main><button>Cart (147)</button></main>`).actions[0];
+  expect(a.id).toBe(b.id);
+});
