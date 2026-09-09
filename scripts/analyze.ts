@@ -31,7 +31,8 @@ function report(path: string, s: Scan) {
 
   const byKey = new Map<string, number>();
   for (const a of s.actions) {
-    const base = a.identityKey.split("#")[0]!;
+    // "~" is the ordinal separator; "#" can appear inside a key legitimately.
+    const base = a.identityKey.split("~")[0]!;
     byKey.set(base, (byKey.get(base) ?? 0) + 1);
   }
   const dupes = [...byKey.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]);

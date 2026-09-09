@@ -201,9 +201,9 @@ function scanSurface(maxNodes) {
     return (text || "")
       .toLowerCase()
       .replace(/\s+/g, " ")
-      .replace(/\d+/g, "#")
+      .replace(/\d+/g, "N")
       .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
-      .replace(/[^a-z0-9#'\- ]/g, "")
+      .replace(/[^a-z0-9'\- ]/g, "")
       .trim()
       .slice(0, 60);
   }
@@ -368,6 +368,11 @@ function scanSurface(maxNodes) {
 
   const actions = [];
   const queue = [document.body];
+  // Elements already recorded, so a descendant that is merely styled clickable
+  // is recognised as part of the same control rather than a second action.
+  // GitHub's nav renders the label in a <span> inside the <a>; both otherwise
+  // qualify, and the inventory doubles.
+  const claimed = new Set();
   // Disambiguates several controls that are genuinely identical in semantics
   // ("Edit" three times in the same list).
   const ordinals = new Map();
@@ -389,8 +394,17 @@ function scanSurface(maxNodes) {
     }
 
     if (node.nodeType === 1 && node !== document.body && visible(node)) {
-      const c = classify(node);
+      let c = classify(node);
+      if (c && c.evidence.pointerCursor && !c.evidence.nativeDom && !c.evidence.accessibility) {
+        for (let p = node.parentElement; p; p = p.parentElement) {
+          if (claimed.has(p)) {
+            c = null;
+            break;
+          }
+        }
+      }
       if (c) {
+        claimed.add(node);
         const testId = testIdOf(node);
         const role = roleOf(node);
         const name = normalizeLabel(accessibleName(node));
@@ -412,7 +426,9 @@ function scanSurface(maxNodes) {
 
         const seen = (ordinals.get(identityKey) || 0);
         ordinals.set(identityKey, seen + 1);
-        const withOrdinal = seen === 0 ? identityKey : identityKey + "#" + seen;
+        // "~" and not "#": normalizeLabel already emits "#"-free text, but the
+        // separator must be one that can never occur inside a key.
+        const withOrdinal = seen === 0 ? identityKey : identityKey + "~" + seen;
 
         actions.push({
           id: shortHash(withOrdinal),

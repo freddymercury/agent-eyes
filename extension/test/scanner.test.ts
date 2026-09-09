@@ -114,3 +114,47 @@ test("node budget truncates rather than hanging, and says so", () => {
   expect(r.stats.truncated).toBe(true);
   expect(r.stats.nodesVisited).toBeLessThanOrEqual(3);
 });
+
+test("a cursor-only descendant of a detected action is not counted twice", () => {
+  // GitHub's nav shape: the label lives in a <span> inside the <a>, and both
+  // would otherwise qualify — doubling the inventory with phantom actions.
+  const win = new Window({ url: "https://example.test/app" });
+  const doc = win.document;
+  doc.body.innerHTML = `<nav><a href="/code"><span class="label">Code</span></a></nav>`;
+  const g = globalThis as any;
+  g.window = win;
+  g.document = doc;
+  g.location = { href: "https://example.test/app" };
+  g.CSS = { escape: (s: string) => s };
+  g.getComputedStyle = (el: any) => ({
+    cursor: el.tagName === "SPAN" ? "pointer" : "auto",
+    visibility: "visible",
+    display: "block",
+  });
+  for (const el of doc.querySelectorAll("*") as any) el.getClientRects = () => [{ width: 10, height: 10 }];
+
+  const r = scanSurface(20000);
+  expect(r.actions).toHaveLength(1);
+  expect(r.actions[0].domExposure.tagName).toBe("a");
+});
+
+test("the ordinal separator cannot collide with a normalized label", () => {
+  const win = new Window({ url: "https://example.test/app" });
+  const doc = win.document;
+  // Bare numeric labels normalize to a placeholder; the ordinal suffix must
+  // still be distinguishable from it.
+  doc.body.innerHTML = `<main><button>0</button><button>0</button></main>`;
+  const g = globalThis as any;
+  g.window = win;
+  g.document = doc;
+  g.location = { href: "https://example.test/app" };
+  g.CSS = { escape: (s: string) => s };
+  g.getComputedStyle = () => ({ cursor: "auto", visibility: "visible", display: "block" });
+  for (const el of doc.querySelectorAll("*") as any) el.getClientRects = () => [{ width: 10, height: 10 }];
+
+  const r = scanSurface(20000);
+  const keys = r.actions.map((a: any) => a.identityKey);
+  expect(new Set(keys).size).toBe(2);
+  expect(keys[1]).toContain("~");
+  expect(r.actions[0].id).not.toBe(r.actions[1].id);
+});
