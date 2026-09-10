@@ -13,7 +13,8 @@
     "churn": "bun run scripts/churn.ts",
     "analyze": "bun run scripts/analyze.ts",
     "diff": "bun run scripts/diff.ts",
-    "watch": "bun run scripts/watch.ts"
+    "watch": "bun run scripts/watch.ts",
+    "notify": "bun run scripts/notifier.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
