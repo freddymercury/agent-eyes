@@ -75,8 +75,16 @@ apply without a restart. Three tiers, each with its own gate:
 | tier | events | gate |
 |---|---|---|
 | `critical` | `serverDown`, `serverRecovered`, `watcherStale` | `criticalCooldownSeconds` |
-| `signal` | `newCapture` — the thing the user asked to hear about | `signalCooldownSeconds` |
-| `routine` | `newSnapshot`, `newSurface`, `watcherUpdate` | `routineGateSeconds` |
+| `signal` | `newCapture`, `newSurface`, `newSnapshot` | `signalCooldownSeconds` |
+| `routine` | `watcherUpdate` | `routineGateSeconds` |
+
+**Tier by who caused it, not by how important it sounds.** Anything the user
+pressed a key for is something they are standing there waiting on, so it belongs
+in `signal`. `routine` is for events that happen on their own. Getting this
+backwards is silent: the notice is queued rather than dropped, so the user sees
+nothing, presses the key again, and has no way to tell the difference from a
+dead notifier. Check the pane log for `queued … ` lines with no matching
+`sent` before concluding anything is broken.
 
 Events fire **on transition, not on state**. A dead server stays dead; reporting
 the condition would report it every tick forever. `watcherUpdate` is off by

@@ -58,9 +58,13 @@ const DEFAULTS: Config = {
   signalCooldownSeconds: 15,
   criticalCooldownSeconds: 60,
   staleWatcherSeconds: 600,
+  // Tier by *who caused it*, not by how important it sounds. Anything the user
+  // pressed a key for is something they are waiting on, so it goes in `signal`
+  // and gets a short cooldown. `routine` is for things that happen on their
+  // own, where nobody is standing there wondering if it worked.
   critical: { serverDown: true, serverRecovered: true, watcherStale: true },
-  signal: { newCapture: true },
-  routine: { newSnapshot: true, watcherUpdate: false, newSurface: true },
+  signal: { newCapture: true, newSurface: true, newSnapshot: true },
+  routine: { watcherUpdate: false },
 };
 
 let config: Config = DEFAULTS;
@@ -259,10 +263,10 @@ function report(kind: string, file: string): void {
     enqueue("signal", `new capture${detail}`);
   } else if (kind === "watcher" && config.routine.watcherUpdate) {
     enqueue("routine", `watcher "${label(file)}" updated`);
-  } else if (kind === "snapshot" && config.routine.newSnapshot) {
-    enqueue("routine", `new snapshot ${file}`);
-  } else if (kind === "surface" && config.routine.newSurface) {
-    enqueue("routine", "new interactive-surface scan");
+  } else if (kind === "snapshot" && config.signal.newSnapshot) {
+    enqueue("signal", `new snapshot ${file}`);
+  } else if (kind === "surface" && config.signal.newSurface) {
+    enqueue("signal", "new interactive-surface scan");
   }
 }
 
