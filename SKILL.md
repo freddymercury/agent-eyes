@@ -55,10 +55,40 @@ a hook. A session runs only when a message is submitted to it. So if the user
 wants to be told when something in `~/.agenteyes/` changes or breaks, a second
 agent has to watch and push.
 
+It is a program — `scripts/notifier.ts` — not an agent holding a loop in its
+head. Start it in its own pane alongside the server:
+
+```
+tmux new-window -t agenteyes -n notifier -c ~/dev/rsrc/agenteyes
+tmux send-keys -t agenteyes:notifier 'bun run notify' Enter
+```
+
+`bun run notify --dry-run` prints what it would send instead of sending;
+`--once` runs a single tick and exits. It writes `~/.agenteyes/notifier.json`
+each tick with its pid and `lastTick`, so **check that file to tell "nothing has
+happened" from "the notifier is dead"** — the absence it exists to detect
+applies to itself.
+
 Rules live in `~/.agenteyes/notify-config.json`, re-read every tick so edits
-apply without a restart. It separates **critical** (server down, watcher not
-alive, server errors) from **routine** (new snapshot, stale watcher), each with
-its own gate.
+apply without a restart. Three tiers, each with its own gate:
+
+| tier | events | gate |
+|---|---|---|
+| `critical` | `serverDown`, `serverRecovered`, `watcherStale` | `criticalCooldownSeconds` |
+| `signal` | `newCapture`, `newSurface`, `newSnapshot` | `signalCooldownSeconds` |
+| `routine` | `watcherUpdate` | `routineGateSeconds` |
+
+**Tier by who caused it, not by how important it sounds.** Anything the user
+pressed a key for is something they are standing there waiting on, so it belongs
+in `signal`. `routine` is for events that happen on their own. Getting this
+backwards is silent: the notice is queued rather than dropped, so the user sees
+nothing, presses the key again, and has no way to tell the difference from a
+dead notifier. Check the pane log for `queued … ` lines with no matching
+`sent` before concluding anything is broken.
+
+Events fire **on transition, not on state**. A dead server stays dead; reporting
+the condition would report it every tick forever. `watcherUpdate` is off by
+default — watchers fire every few seconds and would drown everything else.
 
 ### Addressing another agent
 
