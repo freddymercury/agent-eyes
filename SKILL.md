@@ -50,21 +50,57 @@ first, or the new process fails to bind.
 
 ## 3. The monitoring worker (optional)
 
-A second agent can watch the server and push notifications instead of the user
-polling. Rules live in `~/.agenteyes/notify-config.json`, re-read every tick, so
-edits apply without a restart. It distinguishes **critical** (server down,
-watcher not alive, server errors) from **routine** (new snapshot, stale watcher),
-each with its own gate.
+Nothing wakes an idle agent — not a file changing, not an MCP notification, not
+a hook. A session runs only when a message is submitted to it. So if the user
+wants to be told when something in `~/.agenteyes/` changes or breaks, a second
+agent has to watch and push.
 
-Start it in its own pane and address it with herdr:
+Rules live in `~/.agenteyes/notify-config.json`, re-read every tick so edits
+apply without a restart. It separates **critical** (server down, watcher not
+alive, server errors) from **routine** (new snapshot, stale watcher), each with
+its own gate.
+
+### Addressing another agent
 
 ```
-herdr agent list                      # find the pane
-herdr agent prompt <id> "<message>"   # send it work
-herdr agent read <id>                 # read its output
+herdr agent list                      # addressable panes, and their state
+herdr agent prompt <pane> "<text>"    # submits a prompt — starts a turn there
+herdr agent read <pane> --lines 25    # read its terminal
 ```
 
-Set `target` in the notify config to the pane that should receive alerts.
+Set `target` in the notify config to the pane that should receive alerts. Check
+it still exists — `herdr agent list` — before trusting that anything is
+listening. A worker that died leaves the config behind, pointing at a target
+nobody is watching.
+
+### Four things that govern what can be built here
+
+- **`agent prompt` costs the receiver a full turn** and lands in its transcript
+  as if the user typed it. Notify on "something is broken and I would otherwise
+  carry on not knowing", never on routine activity.
+- **The receiver is not preemptible.** The message arrives instantly and is
+  processed when the target's current turn ends — minutes, potentially. Never
+  put anything time-critical on this path.
+- **The payload is scraped terminal text.** No schema, no types.
+- **Delivery is reliable; action is not.** This is a prompt, not an RPC. The
+  receiving agent may ignore or misread it.
+
+### Push instead of polling, for pane events
+
+herdr has a socket subscription API — no CLI, so this needs a small client
+against `$HERDR_SOCKET_PATH` (`~/.config/herdr/herdr.sock`). Send
+`events.subscribe` with a `pane.output_matched`, `pane.agent_status_changed` or
+`pane.scroll_changed` subscription and events are pushed as they occur.
+
+`OutputMatch` is `{"type": "substring"|"regex", "value": "…"}` — the field is
+**`value`**, not `pattern`. Full schema: `herdr api schema --json`.
+
+This does **not** cover `~/.agenteyes/` — herdr observes terminals, not files.
+Watch the filesystem with fs events; use `pane.output_matched` on the target
+pane if the worker needs to confirm its message landed.
+
+Beware self-match: a broad pattern will hit the agent's own UI chrome and its
+prose about the pattern. Use a sentinel that cannot occur in either.
 
 ## 4. Reading captures
 
