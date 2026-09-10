@@ -2,13 +2,54 @@ const BRIDGE_URL = "http://localhost:8765/context";
 
 // ---- full page / selection capture (unchanged behavior) ----
 
+// Open shadow roots hold real content that innerText and outerHTML cannot see,
+// because neither crosses a shadow boundary. A page built that way captures as
+// an empty string and reports success — the worst failure this tool has, since
+// it is indistinguishable from a page that really is empty. The surface scanner
+// already traverses these; the capture paths did not.
+//
+// Closed roots (attachShadow({mode:"closed"})) are unreachable from a content
+// script at all. Nothing can be done for those but say so.
 function extractPageContent() {
+  // Duplicated inside each injected function on purpose: executeScript({func})
+  // serializes the function alone, so anything at module scope is undefined in
+  // the page. A shared helper here would throw a ReferenceError at capture time.
+  function collectShadowText(root, out, depth) {
+    if (!root || depth > 10 || out.texts.length > 500) return;
+    const els = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (const el of els) {
+      if (!el.shadowRoot) continue;
+      out.count++;
+      for (const child of el.shadowRoot.children) {
+        const t = (child.innerText || child.textContent || "").trim();
+        if (t) out.texts.push(t);
+      }
+      collectShadowText(el.shadowRoot, out, depth + 1);
+    }
+  }
+
   const selection = window.getSelection().toString().trim();
-  const text = selection.length > 0 ? selection : document.body.innerText;
+  const base = selection.length > 0 ? selection : document.body.innerText;
+
+  // Supplement rather than replace: innerText handles visibility and layout
+  // better than a manual walk, so keep it and add what it could not reach.
+  const shadow = { count: 0, texts: [] };
+  if (selection.length === 0) collectShadowText(document.body, shadow, 0);
+  const text = shadow.texts.length ? [base, ...shadow.texts].filter(Boolean).join("\n") : base;
+
+  const warnings = [];
+  if (!text.trim()) {
+    warnings.push(
+      "capture is empty — the page may render into a closed shadow root or an iframe, neither of which a content script can read"
+    );
+  }
+
   return {
     title: document.title,
     url: location.href,
     usedSelection: selection.length > 0,
+    shadowRootsTraversed: shadow.count,
+    warnings,
     text: text.slice(0, 200000)
   };
 }
@@ -47,8 +88,34 @@ function startElementPicker(mode) {
     return el.tagName.toLowerCase() + id + cls;
   }
 
+  // Duplicated inside each injected function on purpose: executeScript({func})
+  // serializes the function alone, so anything at module scope is undefined in
+  // the page. A shared helper here would throw a ReferenceError at capture time.
+  function collectShadowText(root, out, depth) {
+    if (!root || depth > 10 || out.texts.length > 500) return;
+    const els = root.querySelectorAll ? root.querySelectorAll("*") : [];
+    for (const el of els) {
+      if (!el.shadowRoot) continue;
+      out.count++;
+      for (const child of el.shadowRoot.children) {
+        const t = (child.innerText || child.textContent || "").trim();
+        if (t) out.texts.push(t);
+      }
+      collectShadowText(el.shadowRoot, out, depth + 1);
+    }
+  }
+
+  // composedPath() crosses shadow boundaries; elementFromPoint returns the host,
+  // so on a shadow-rendered page the picker could only ever select an empty div.
+  function deepTarget(e) {
+    const path = typeof e.composedPath === "function" ? e.composedPath() : null;
+    const first = path && path.length ? path[0] : null;
+    if (first && first.nodeType === 1 && first !== overlay && first !== label) return first;
+    return document.elementFromPoint(e.clientX, e.clientY);
+  }
+
   function onMove(e) {
-    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const el = deepTarget(e);
     if (!el || el === currentEl || el === overlay || el === label) return;
     currentEl = el;
     const r = el.getBoundingClientRect();
@@ -111,6 +178,28 @@ function startElementPicker(mode) {
     if (currentEl) {
       const attrs = {};
       for (const a of currentEl.attributes) attrs[a.name] = a.value;
+
+      const shadow = { count: 0, texts: [] };
+      collectShadowText(currentEl, shadow, 0);
+      if (currentEl.shadowRoot) {
+        shadow.count++;
+        for (const child of currentEl.shadowRoot.children) {
+          const t = (child.innerText || child.textContent || "").trim();
+          if (t) shadow.texts.push(t);
+        }
+      }
+      const base = (currentEl.innerText || "").trim();
+      const text = shadow.texts.length ? [base, ...shadow.texts].filter(Boolean).join("\n") : base;
+
+      const warnings = [];
+      if (!text) {
+        warnings.push(
+          currentEl.shadowRoot
+            ? "this element hosts a shadow root whose content could not be read"
+            : "this element captured as empty — it may host a closed shadow root or an iframe"
+        );
+      }
+
       chrome.runtime.sendMessage({
         type: "agenteyes-element-picked",
         data: {
@@ -119,7 +208,9 @@ function startElementPicker(mode) {
           elementPicked: true,
           tag: currentEl.tagName.toLowerCase(),
           attrs,
-          text: (currentEl.innerText || "").slice(0, 20000),
+          shadowRootsTraversed: shadow.count,
+          warnings,
+          text: text.slice(0, 20000),
           outerHTML: currentEl.outerHTML.slice(0, 20000)
         }
       });
