@@ -1,22 +1,153 @@
 ---
 name: agent-eyes
-description: Reads live Chrome page or element captures from AgentEyes (~/.agenteyes/context.md). Use when the user mentions AgentEyes, "the page," "what I'm looking at," "what I just sent," a browser capture, or pointing at a DOM element.
+description: Look at the user's live Chrome tab via AgentEyes — page and element captures, watchers, interactive-surface scans, snapshots. Also starts the AgentEyes server and its monitoring worker. Use when the user mentions AgentEyes, "the page", "what I'm looking at", "what I just sent", a browser capture, a picked DOM element, watchers, or asks to start/restart the server or worker.
 ---
+
 # AgentEyes
-The user has a local tool called AgentEyes. A Chrome extension captures the current page (or one picked element) and a local server writes it to disk.
-Source repo: `~/dev/rsrc/agent-eyes`. Server: `cd ~/dev/rsrc/agent-eyes/server && node server.js` (port 8765). If captures are missing or stale, mention that the server may not be running.
-## Where to look
-- `~/.agenteyes/context.md` — latest capture, human-readable. Default for "the page" or "what I just sent."
-- `~/.agenteyes/context.json` — same data, structured.
-- `http://localhost:8765/context` — same JSON over HTTP.
-- `~/.agenteyes/captures/` — history only. Check here if the user asks about an earlier send, not by default.
-## Freshness
-There is no push notification. Check `capturedAt` (or the "captured …" line). Treat the file as possibly stale unless the user just said they sent something. If it looks old relative to the conversation, say so instead of assuming it is the current page.
-## Interpreting fields
-- `elementPicked` true: one specific element (`tag`, `attrs`, `text`, `outerHTML`). Treat as narrow, scoped context, not a page summary.
-- `elementPicked` absent: `text` is the highlighted selection when `usedSelection` is true, otherwise full visible page text.
-- `context.md` / `context.json` hold only the latest capture. History lives in `captures/`.
-## Do not assume
-- A file existing does not mean it is the current page — check the timestamp.
-- No screenshots yet — text and DOM only. Charts and canvas content will not be in the capture.
-- Missing or clearly stale files usually mean `node server.js` is not running.
+
+A Chrome extension captures the user's live tab and POSTs it to a local server
+(`127.0.0.1:8765`, loopback only), which writes to `~/.agenteyes/`.
+
+**Paths below assume the repo is at `~/dev/rsrc/agenteyes`** — the only
+machine-specific value in this file. If it is cloned elsewhere, adjust the
+`cd`/`-c` arguments in §2 accordingly; everything under `~/.agenteyes/` is fixed
+by the server and does not move.
+
+## 1. Check state before anything else
+
+```
+curl -s -m 3 -o /dev/null -w "server %{http_code}\n" http://localhost:8765/context
+lsof -ti :8765 | xargs -r ps -o pid=,ppid=,lstart=,command=
+```
+
+- `200` — server up, a capture exists.
+- `404` — **server up, nothing captured yet.** Not an error. `latest` is held in
+  memory, so a restart empties it while `captures/` on disk stays intact.
+- no response — server down. Start it (§2).
+- `ppid` of `1` — the server was orphaned by a closed pane. It still works, but
+  nobody sees its logs. Restart it into a pane (§2).
+
+## 2. Start the server as a visible worker
+
+Never start it bare in the background — that is how it gets orphaned. Put it in
+a pane that owns its lifetime:
+
+```
+tmux has-session -t agenteyes 2>/dev/null || \
+  tmux new-session -d -s agenteyes -n server -c ~/dev/rsrc/agenteyes/server
+tmux send-keys -t agenteyes:server 'bun server.js' Enter
+```
+
+Verify it bound, and say so — a silent failure here looks exactly like "nothing
+has been captured yet":
+
+```
+sleep 2; tmux capture-pane -p -t agenteyes:server | tail -5
+```
+
+The user attaches with `tmux attach -t agenteyes`. Kill any orphan holding 8765
+first, or the new process fails to bind.
+
+## 3. The monitoring worker (optional)
+
+Nothing wakes an idle agent — not a file changing, not an MCP notification, not
+a hook. A session runs only when a message is submitted to it. So if the user
+wants to be told when something in `~/.agenteyes/` changes or breaks, a second
+agent has to watch and push.
+
+Rules live in `~/.agenteyes/notify-config.json`, re-read every tick so edits
+apply without a restart. It separates **critical** (server down, watcher not
+alive, server errors) from **routine** (new snapshot, stale watcher), each with
+its own gate.
+
+### Addressing another agent
+
+```
+herdr agent list                      # addressable panes, and their state
+herdr agent prompt <pane> "<text>"    # submits a prompt — starts a turn there
+herdr agent read <pane> --lines 25    # read its terminal
+```
+
+Set `target` in the notify config to the pane that should receive alerts. Check
+it still exists — `herdr agent list` — before trusting that anything is
+listening. A worker that died leaves the config behind, pointing at a target
+nobody is watching.
+
+### Four things that govern what can be built here
+
+- **`agent prompt` costs the receiver a full turn** and lands in its transcript
+  as if the user typed it. Notify on "something is broken and I would otherwise
+  carry on not knowing", never on routine activity.
+- **The receiver is not preemptible.** The message arrives instantly and is
+  processed when the target's current turn ends — minutes, potentially. Never
+  put anything time-critical on this path.
+- **The payload is scraped terminal text.** No schema, no types.
+- **Delivery is reliable; action is not.** This is a prompt, not an RPC. The
+  receiving agent may ignore or misread it.
+
+### Push instead of polling, for pane events
+
+herdr has a socket subscription API — no CLI, so this needs a small client
+against `$HERDR_SOCKET_PATH` (`~/.config/herdr/herdr.sock`). Send
+`events.subscribe` with a `pane.output_matched`, `pane.agent_status_changed` or
+`pane.scroll_changed` subscription and events are pushed as they occur.
+
+`OutputMatch` is `{"type": "substring"|"regex", "value": "…"}` — the field is
+**`value`**, not `pattern`. Full schema: `herdr api schema --json`.
+
+This does **not** cover `~/.agenteyes/` — herdr observes terminals, not files.
+Watch the filesystem with fs events; use `pane.output_matched` on the target
+pane if the worker needs to confirm its message landed.
+
+Beware self-match: a broad pattern will hit the agent's own UI chrome and its
+prose about the pattern. Use a sentinel that cannot occur in either.
+
+## 4. Reading captures
+
+Prefer the MCP tools when the `agent-eyes` bridge is connected — they carry
+staleness and comparability warnings the raw files do not:
+
+`agent_eyes_get_context`, `agent_eyes_get_staleness`, `agent_eyes_get_text`,
+`agent_eyes_list_watchpoints`, `agent_eyes_get_watchpoint`,
+`agent_eyes_list_actions`, `agent_eyes_get_surface`, `agent_eyes_save_snapshot`,
+`agent_eyes_list_snapshots`, `agent_eyes_get_snapshot`,
+`agent_eyes_check_comparable`, `agent_eyes_mark_baseline`,
+`agent_eyes_check_watchpoints`, `agent_eyes_diff_snapshots`,
+`agent_eyes_invoke_action`.
+
+Falling back to files or HTTP:
+
+| what | file | HTTP |
+|---|---|---|
+| latest capture | `~/.agenteyes/context.md` / `.json` | `GET /context`, `/context.md` |
+| live watchers | `~/.agenteyes/watch/<id>_<label>.json` | `GET /watch` |
+| interactive surface | `~/.agenteyes/surface.json` | `GET /surface` |
+| saved snapshots | `~/.agenteyes/snapshots/` | `GET /snapshots` |
+| capture history | `~/.agenteyes/captures/` | — |
+
+**Watchers beat `context.md`.** A watcher file is rewritten in place whenever its
+element changes, so it is current by construction — no staleness check needed.
+`context.md` is pull-based and holds only the most recent send. Check `capturedAt`
+and say so if it looks old rather than assuming it is the page the user means.
+Use `captures/` only when the user references something they sent earlier.
+
+## 5. Interpreting a capture
+
+- `elementPicked: true` — the user pointed at **one element**. `tag`, `attrs`,
+  `text`, `outerHTML` describe just that. Narrow, deliberate scope, not a page
+  summary.
+- `elementPicked` absent — `text` is their selection when `usedSelection` is
+  true, otherwise the page's full visible text.
+- A watcher's label is the user's own words and is the main signal for what it
+  holds. Fall back to content when labels are ambiguous.
+
+## 6. What not to assume
+
+- **A file existing does not mean it is current.** Check the timestamp.
+- **Nothing in this system errors loudly.** A stale watcher reads exactly like a
+  live one; a stopped server reads as "no captures yet". When something looks
+  empty, distinguish "not running" from "nothing sent" before reporting.
+- A watcher whose file stops changing usually means the page re-rendered its
+  element away. The popup shows a red dot; the user must re-pick it. Not
+  repairable from here.
+- **No screenshots** — text and DOM only. Charts and canvas content are absent.
