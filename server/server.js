@@ -46,6 +46,7 @@ const WATCH_EXPIRE_SECONDS = Number(process.env.AGENT_EYES_WATCH_EXPIRE || 900);
 // Latest interactive-surface scan. Overwritten rather than appended: it is a
 // current-state file, like context.json, not a history.
 const SURFACE_FILE = path.join(DIR, "surface.json");
+const DOCUMENT_FILE = path.join(DIR, "document.json");
 // Console, network and errors from the page. Appended rather than overwritten:
 // unlike a surface scan, the interesting part is usually what happened, not
 // what is true now.
@@ -134,6 +135,29 @@ function listSnapshots() {
 
 function writeSurface(data) {
   fs.writeFileSync(SURFACE_FILE, JSON.stringify(data, null, 2), "utf8");
+}
+
+/**
+ * Raw markup to disk, structured data to the reader.
+ *
+ * The .html file is deliberately not served from any endpoint that a consumer
+ * reaches by accident: a document is megabytes, and the whole point of this
+ * mode is that the big tier stays out of anyone's context unless asked for by
+ * path. document.json holds the summary and the extracted blocks, and names
+ * the file so a consumer can grep it when the structured data is not enough.
+ */
+function writeDocument(data) {
+  const domain = domainFromUrl(data.url);
+  const stamp = safeTimestamp(data.capturedAt);
+  const filename = `${stamp}_${domain}_document.html`;
+  let htmlPath = null;
+  if (data.html) {
+    htmlPath = path.join(CAPTURES_DIR, filename);
+    fs.writeFileSync(htmlPath, data.html, "utf8");
+  }
+  const { html, ...rest } = data;
+  fs.writeFileSync(DOCUMENT_FILE, JSON.stringify({ ...rest, htmlPath }, null, 2), "utf8");
+  return { filename, htmlPath, bytes: data.html ? data.html.length : 0 };
 }
 
 function watcherAgeSeconds(data) {
@@ -257,6 +281,16 @@ const server = http.createServer((req, res) => {
           return send(res, 200, JSON.stringify({ ok: true }));
         }
 
+        if (data.kind === "document") {
+          const info = writeDocument(data);
+          const sum = data.summary || {};
+          console.log(
+            `[agenteyes] document: ${sum.jsonldBlocks} json-ld, ${sum.metaTags} meta, ` +
+              `${sum.images} images${info.htmlPath ? `, ${info.bytes} bytes -> ${info.filename}` : " (markup over cap, not stored)"}`
+          );
+          return send(res, 200, JSON.stringify({ ok: true, ...info }));
+        }
+
         if (data.kind === "surface") {
           writeSurface(data);
           const st = data.stats || {};
@@ -370,6 +404,35 @@ const server = http.createServer((req, res) => {
     return send(res, 200, fs.readFileSync(SURFACE_FILE, "utf8"));
   }
 
+  // `part` exists so a consumer can take the cheap tier. Default is summary
+  // only: asking for the page should not cost a thousand image URLs.
+  if (req.method === "GET" && req.url.startsWith("/document")) {
+    if (!fs.existsSync(DOCUMENT_FILE)) {
+      return send(res, 404, JSON.stringify({ ok: false, error: "no document captured yet" }));
+    }
+    const doc = JSON.parse(fs.readFileSync(DOCUMENT_FILE, "utf8"));
+    const part = new URL(req.url, "http://x").searchParams.get("part") || "summary";
+    const base = {
+      title: doc.title,
+      url: doc.url,
+      capturedAt: doc.capturedAt,
+      htmlPath: doc.htmlPath,
+      truncated: doc.truncated,
+      warnings: doc.warnings
+    };
+    if (part === "all") return send(res, 200, JSON.stringify(doc));
+    if (part === "summary") return send(res, 200, JSON.stringify({ ...base, summary: doc.summary }));
+    const ex = doc.extracted || {};
+    if (Object.prototype.hasOwnProperty.call(ex, part)) {
+      return send(res, 200, JSON.stringify({ ...base, [part]: ex[part] }));
+    }
+    return send(
+      res,
+      400,
+      JSON.stringify({ ok: false, error: `unknown part "${part}"`, available: ["summary", ...Object.keys(ex), "all"] })
+    );
+  }
+
   if (req.method === "POST" && req.url === "/watch/baseline") {
     let body = "";
     req.on("data", (c) => (body += c));
@@ -434,6 +497,7 @@ const server = http.createServer((req, res) => {
         status: "running",
         endpoints: [
           "POST /context", "GET /context", "GET /context.md", "GET /watch", "GET /surface",
+          "GET /document?part=summary|jsonld|meta|images|links|all",
           "POST /snapshot", "GET /snapshots", "GET /snapshot/:id", "DELETE /snapshot/:id",
           "POST /watch/baseline", "GET /watch/baseline", "DELETE /watch/baseline",
         ],

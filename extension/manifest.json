@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AgentEyes",
   "version": "0.10.0",
-  "description": "Sends the current page (or your selection) to a local agent bridge — on demand, or continuously with auto-watch.",
+  "description": "Sends the current page (or your selection) to a local agent bridge \u2014 on demand, or continuously with auto-watch.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -46,6 +46,9 @@
         "mac": "Command+Shift+U"
       },
       "description": "Scan the page's interactive surface"
+    },
+    "capture-document": {
+      "description": "Capture the full document (raw HTML to disk, structured data to the agent)"
     }
   }
 }

@@ -54,6 +54,122 @@ function extractPageContent() {
   };
 }
 
+// ---- document capture: capture wide, deliver narrow ----
+//
+// innerText throws away JSON-LD, meta tags and image URLs — the three things an
+// agent analysing a page most often needs. outerHTML keeps all of it, but a
+// real page is megabytes, and dumping that into an agent's context spends the
+// budget on markup nobody reads.
+//
+// So: extract here, where the browser has already parsed the document, and send
+// three tiers. `summary` is a handful of counts and is always cheap to read.
+// `extracted` holds the structured blocks. The raw markup goes to disk only,
+// and the consumer is told where. Nothing forces the big tier into context.
+function extractDocument(maxBytes) {
+  const abs = (u) => {
+    try {
+      return new URL(u, location.href).href;
+    } catch {
+      return u;
+    }
+  };
+
+  const jsonld = [];
+  for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+    const raw = el.textContent || "";
+    try {
+      jsonld.push({ ok: true, data: JSON.parse(raw) });
+    } catch (err) {
+      // Malformed JSON-LD is common and is itself worth reporting, so keep the
+      // source rather than dropping the block silently.
+      jsonld.push({ ok: false, error: String(err), raw: raw.slice(0, 2000) });
+    }
+  }
+
+  const meta = {};
+  for (const el of document.querySelectorAll("meta")) {
+    const key = el.getAttribute("property") || el.getAttribute("name") || el.getAttribute("http-equiv");
+    const val = el.getAttribute("content");
+    if (key && val != null) meta[key] = val;
+  }
+
+  const images = [];
+  const seenImg = new Set();
+  for (const el of document.querySelectorAll("img")) {
+    const src = el.currentSrc || el.getAttribute("src");
+    if (!src || seenImg.has(src)) continue;
+    seenImg.add(src);
+    images.push({
+      src: abs(src),
+      alt: el.getAttribute("alt") || null,
+      width: el.naturalWidth || null,
+      height: el.naturalHeight || null
+    });
+  }
+
+  const links = [];
+  for (const el of document.querySelectorAll("link[rel]")) {
+    const href = el.getAttribute("href");
+    if (href) links.push({ rel: el.getAttribute("rel"), href: abs(href) });
+  }
+
+  // Passwords are the one class that can be removed completely and without
+  // judgement, so they are. Everything else a document carries — bearer tokens
+  // in inline scripts, CSRF fields, session ids in data attributes — cannot be
+  // detected reliably, and a scrub that misses some is worse than none: it
+  // makes the file look safe. Those get a warning instead of a false promise.
+  let redacted = 0;
+  const pw = document.querySelectorAll('input[type="password"]');
+  const restore = [];
+  for (const el of pw) {
+    if (el.getAttribute("value")) {
+      restore.push([el, el.getAttribute("value")]);
+      el.setAttribute("value", "[redacted]");
+      redacted++;
+    }
+  }
+  let html = document.documentElement.outerHTML;
+  for (const [el, v] of restore) el.setAttribute("value", v);
+
+  const bytes = html.length;
+  const warnings = [];
+  let truncated = false;
+  if (maxBytes && bytes > maxBytes) {
+    // Refuse loudly rather than truncate silently. A half document that looks
+    // whole is the failure this project keeps running into.
+    html = null;
+    truncated = true;
+    warnings.push(
+      `document is ${bytes} bytes, over the ${maxBytes} limit — raw markup was not captured. ` +
+        `The structured data below is complete. Raise the cap if you need the markup.`
+    );
+  }
+  warnings.push(
+    "raw markup may contain CSRF tokens, session identifiers and hidden field values. " +
+      "Only input[type=password] values are removed. Delete the .html file when done."
+  );
+
+  return {
+    kind: "document",
+    title: document.title,
+    url: location.href,
+    summary: {
+      bytes,
+      jsonldBlocks: jsonld.length,
+      metaTags: Object.keys(meta).length,
+      images: images.length,
+      linkRels: links.length,
+      passwordsRedacted: redacted,
+      canonical: (document.querySelector('link[rel="canonical"]') || {}).href || null,
+      description: meta.description || meta["og:description"] || null
+    },
+    extracted: { jsonld, meta, images, links },
+    warnings,
+    truncated,
+    html
+  };
+}
+
 // ---- element picker: hover to highlight, click to capture ----
 // Injected on demand. Talks back to the background script via
 // chrome.runtime.sendMessage since executeScript can't return values
@@ -1327,6 +1443,22 @@ async function sendCurrentTab(tabId) {
   return postToBridge({ ...result, capturedAt: new Date().toISOString() });
 }
 
+/** Cap is generous but finite — see extractDocument on why it refuses rather than truncates. */
+const DOCUMENT_MAX_BYTES = 5_000_000;
+
+async function captureDocument(tabId) {
+  const tab = await resolveTab(tabId);
+  if (!tab) return { ok: false, error: "no active tab" };
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: extractDocument,
+    args: [DOCUMENT_MAX_BYTES]
+  });
+  const r = await postToBridge({ ...result, capturedAt: new Date().toISOString() });
+  flashBadge(result.truncated ? "BIG" : "DOC", result.truncated ? "#E5484D" : "#3B82F6");
+  return r;
+}
+
 async function activatePicker(tabId) {
   const tab = tabId
     ? { id: tabId }
@@ -1596,6 +1728,7 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === "pick-element") activatePicker();
   if (command === "toggle-watch") addWatchTarget();
   if (command === "scan-surface") scanSurface_();
+  if (command === "capture-document") captureDocument();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1724,6 +1857,11 @@ chrome.runtime.onInstalled.addListener(() => {
     title: "AgentEyes: scan interactive surface",
     contexts: ["all"]
   });
+  chrome.contextMenus.create({
+    id: "agenteyes-capture-document",
+    title: "AgentEyes: capture full document (raw HTML)",
+    contexts: ["all"]
+  });
 });
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -1732,4 +1870,5 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "agenteyes-pick-element") activatePicker(tab.id);
   if (info.menuItemId === "agenteyes-toggle-watch") addWatchTarget(tab.id);
   if (info.menuItemId === "agenteyes-scan-surface") scanSurface_(tab.id);
+  if (info.menuItemId === "agenteyes-capture-document") captureDocument(tab.id);
 });
