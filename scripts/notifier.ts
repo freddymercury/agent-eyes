@@ -252,14 +252,17 @@ function onChange(kind: string, file: string): void {
 
 function report(kind: string, file: string): void {
   if (kind === "capture" && config.signal.newCapture) {
-    let detail = "";
+    // fs.watch fires on delete and on partial writes too. A capture that
+    // cannot be read is not a capture — reporting one would be inventing an
+    // event, which is worse than missing it.
+    let d: any;
     try {
-      const d = JSON.parse(fs.readFileSync(path.join(DIR, "context.json"), "utf8"));
-      const what = d.elementPicked ? "element" : d.usedSelection ? "selection" : "page";
-      detail = ` — ${what} from ${d.title ?? d.url ?? "unknown"} (${(d.text ?? "").length} chars)`;
+      d = JSON.parse(fs.readFileSync(path.join(DIR, "context.json"), "utf8"));
     } catch {
-      // The write may not have landed yet; the event still stands.
+      return;
     }
+    const what = d.elementPicked ? "element" : d.usedSelection ? "selection" : "page";
+    const detail = ` — ${what} from ${d.title ?? d.url ?? "unknown"} (${(d.text ?? "").length} chars)`;
     enqueue("signal", `new capture${detail}`);
   } else if (kind === "watcher" && config.routine.watcherUpdate) {
     enqueue("routine", `watcher "${label(file)}" updated`);
