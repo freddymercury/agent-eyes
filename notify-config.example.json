@@ -1,0 +1,23 @@
+{
+  "_comment": "Copy to ~/.agenteyes/notify-config.json (setup.sh does this). Re-read every tick, so edits take effect without restarting. All periods in seconds. Events fire on transition, not state.",
+  "enabled": true,
+  "target": "",
+  "pollSeconds": 5,
+  "signalCooldownSeconds": 15,
+  "criticalCooldownSeconds": 60,
+  "routineGateSeconds": 300,
+  "staleWatcherSeconds": 600,
+  "critical": {
+    "serverDown": true,
+    "serverRecovered": true,
+    "watcherStale": true
+  },
+  "signal": {
+    "newCapture": true,
+    "newSurface": true,
+    "newSnapshot": true
+  },
+  "routine": {
+    "watcherUpdate": false
+  }
+}
