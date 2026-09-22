@@ -6,14 +6,32 @@ Two modes: **on demand** (press a key, one capture lands) or **watchers** (point
 at one or more elements and each re-sends itself every 5 seconds, but only when
 its content actually changed).
 
+## Quick start
+
+```bash
+./setup.sh           # installs the skill, registers MCP, writes the notifier config, verifies
+./setup.sh --check   # diagnose only, changes nothing
+```
+
+It reports what is live and what is not, and names the three things it cannot do
+for you (loading the extension, reloading it after a pull, and assigning the
+fifth shortcut). Run `--check` whenever something seems not to be working —
+almost every failure in this system is silent, so "nothing happened" is not a
+diagnosis.
+
+Then the two manual steps:
+
 ## 1. Start the server
 
 ```
 cd server
-node server.js
+node server.js        # bun server.js works too
 ```
 
-No install step — it only uses Node's built-in `http` module. Leave this running in a terminal tab.
+No install step and no dependencies — it uses only Node's built-in `http`
+module. Leave it running in a terminal tab you can see: backgrounded, it gets
+orphaned when the terminal closes and keeps serving with its logs going nowhere.
+`./setup.sh --check` detects that case.
 
 ## 2. Load the extension
 
@@ -32,6 +50,10 @@ Four ways in, all doing the same two things — send the page, or pick an elemen
 - **Cmd+Shift+K** (Mac) / **Ctrl+Shift+K** (Win/Linux) — jumps straight into picker mode
 - **Cmd+Shift+Y** (Mac) / **Ctrl+Shift+Y** (Win/Linux) — pick an element to **watch** continuously
 - **Cmd+Shift+U** (Mac) / **Ctrl+Shift+U** (Win/Linux) — **scan** the page's interactive surface
+- **Capture full document** — raw HTML to disk, structured data (JSON-LD, meta
+  tags, image URLs) to the agent. Right-click menu, or assign a key at
+  `chrome://extensions/shortcuts`; Chrome allows four suggested shortcuts and
+  the four above take them.
 
 **Picker mode** (from any entry point): hover to highlight whatever's under your cursor — a label shows its tag/id/class — click to send just that element. **Esc** cancels without sending anything.
 
@@ -129,6 +151,32 @@ ln -s AGENTS.md CLAUDE.md    # or whatever filename your harness expects
 Without this, the agent has no framing for the file — it'll just see raw
 text with no idea it's a live capture from your browser.
 
+### The skill (Claude Code)
+
+`SKILL.md` teaches an agent the whole tool — how to tell the three
+empty-looking states apart, how to start the server so it is not orphaned, how
+to read captures, and what not to assume. `./setup.sh` installs it to
+`~/.claude/skills/agent-eyes/`, rewriting the repo paths to match your clone.
+
+Unlike `AGENTS.md`, it works from **any** directory, which is the point: the
+case AgentEyes exists for is an agent working on something else entirely.
+
+### Notifications (optional)
+
+```bash
+bun run notify        # --dry-run to see what it would send, --once for a single tick
+```
+
+Nothing wakes an idle agent, so a separate process watches `~/.agenteyes/` and
+pushes via `herdr agent prompt`. Rules live in `~/.agenteyes/notify-config.json`
+(template: `notify-config.example.json`), re-read every tick. Three tiers —
+`critical`, `signal`, `routine` — tiered by *who caused the event*, since
+anything you pressed a key for is something you are waiting on. It writes
+`~/.agenteyes/notifier.json` each tick so its own absence is detectable.
+
+Requires [herdr](https://github.com/) for delivery. Without it, everything else
+still works; you just poll instead of being told.
+
 ## Agent Bridge (MCP)
 
 The bridge exposes what the extension sees to any MCP-capable harness, so an
@@ -140,8 +188,17 @@ bun install
 bun run bridge      # stdio MCP server
 ```
 
-For Claude Code, `.mcp.json` in this repo already registers it. Other harnesses
-take the same command: `bun run bridge/src/index.ts`.
+`.mcp.json` in this repo registers it for Claude Code — but **project-scoped**,
+meaning the tools exist only while your agent is running inside this directory,
+which is the one place you do not need them. Register it once for every
+directory instead:
+
+```bash
+claude mcp add --scope user agent-eyes -- bun run /path/to/agenteyes/bridge/src/index.ts
+```
+
+`./setup.sh` does this, and `--check` tells you which scope you actually have.
+Other harnesses take the same command: `bun run bridge/src/index.ts`.
 
 ### Scanning the interactive surface
 
