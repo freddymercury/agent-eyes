@@ -749,6 +749,53 @@ function scanSurface(maxNodes) {
     return false;
   }
 
+  /**
+   * The control's current state.
+   *
+   * Without this a diff cannot see form state at all: a checkbox going from
+   * unchecked to checked produces two scans whose actions are identical in
+   * label, kind, landmark, identity key and prominence. On an app-like page
+   * that is most of what ever changes.
+   *
+   * Deliberately NOT folded into the identity key. A control whose value
+   * changed is the same control; folding value in would make every edit read
+   * as one removal plus one addition, which is the opposite of useful.
+   */
+  function stateOf(el) {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    const out = {};
+
+    if (tag === "input" && (type === "checkbox" || type === "radio")) {
+      out.checked = !!el.checked;
+    } else if (tag === "select") {
+      const chosen = el.selectedOptions ? [...el.selectedOptions] : [];
+      // The option's text, not its index — an index means nothing to a reader
+      // and nothing across a re-render.
+      if (chosen.length) {
+        out.selected = chosen.map((o) => (o.label || o.textContent || "").trim()).join(", ");
+      }
+    } else if (tag === "input" || tag === "textarea") {
+      // Never capture a password, in any mode. This is the one redaction rule
+      // that is complete and unambiguous, so it applies without exception; see
+      // the document-capture policy on why partial scrubbing is worse than none.
+      if (type === "password") {
+        out.value = el.value ? "[redacted]" : "";
+      } else if (type !== "file") {
+        out.value = String(el.value == null ? "" : el.value).slice(0, 300);
+      }
+    }
+
+    // ARIA widgets carry state in attributes rather than properties, and a div
+    // acting as a checkbox is exactly the case this scanner exists for.
+    for (const attr of ["aria-checked", "aria-selected", "aria-expanded", "aria-pressed"]) {
+      const v = el.getAttribute(attr);
+      if (v != null) out[attr] = v;
+    }
+
+    return Object.keys(out).length ? out : undefined;
+  }
+
   function classify(el) {
     const tag = el.tagName;
     const role = (el.getAttribute("role") || "").toLowerCase();
@@ -936,6 +983,7 @@ function scanSurface(maxNodes) {
           kind: c.kind,
           evidence: c.evidence,
           enabled: !isDisabled(node),
+          state: stateOf(node),
           confidence: c.confidence,
           domExposure: {
             domPath: domPath(node),

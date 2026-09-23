@@ -1,7 +1,7 @@
 import type { Action, SnapshotMeta } from "./index";
 import { comparabilityWarnings } from "./index";
 
-export type ChangeKind = "added" | "removed" | "renamed" | "changed";
+export type ChangeKind = "added" | "removed" | "renamed" | "changed" | "state";
 
 export interface ActionChange {
   kind: ChangeKind;
@@ -17,7 +17,7 @@ export interface SurfaceDiff {
   /** Reasons the comparison may not mean what it appears to. Never empty-checked
    *  away: a diff is reported alongside its caveats, not withheld. */
   warnings: string[];
-  counts: { added: number; removed: number; renamed: number; changed: number; unchanged: number };
+  counts: { added: number; removed: number; renamed: number; changed: number; state: number; unchanged: number };
   changes: ActionChange[];
 }
 
@@ -43,6 +43,27 @@ function changedFields(before: Action, after: Action): string[] {
   if (before.kind !== after.kind) f.push("kind");
   if ((before.landmark ?? "") !== (after.landmark ?? "")) f.push("landmark");
   return f;
+}
+
+/**
+ * State changes are reported separately from `changed`.
+ *
+ * A checkbox being ticked and a button being renamed are different events: one
+ * is the page doing its job, the other is the page becoming a different page.
+ * Merging them buries the second under the first on any form-heavy screen,
+ * which is precisely where a diff is most wanted.
+ */
+const STATE_KEYS = [
+  "value", "checked", "selected",
+  "aria-checked", "aria-selected", "aria-expanded", "aria-pressed",
+] as const;
+
+function stateFields(before: Action, after: Action): string[] {
+  const b = before.state ?? {};
+  const a = after.state ?? {};
+  return STATE_KEYS.filter((k) => (b as Record<string, unknown>)[k] !== (a as Record<string, unknown>)[k]).map(
+    (k) => `state.${k}`,
+  );
 }
 
 const prom = (a?: Action, b?: Action) => Math.max(a?.prominence ?? 0.7, b?.prominence ?? 0.7);
@@ -78,8 +99,19 @@ export function diffSurfaces(
     survivedBefore.add(id);
     survivedAfter.add(id);
     const fields = changedFields(before, after);
+    const stateOnly = stateFields(before, after);
     if (fields.length) {
-      changes.push({ kind: "changed", prominence: prom(before, after), before, after, fields });
+      // A real change wins the label even when state moved too — the state
+      // delta rides along in `fields` so nothing is lost.
+      changes.push({
+        kind: "changed",
+        prominence: prom(before, after),
+        before,
+        after,
+        fields: [...fields, ...stateOnly],
+      });
+    } else if (stateOnly.length) {
+      changes.push({ kind: "state", prominence: prom(before, after), before, after, fields: stateOnly });
     } else {
       unchanged++;
     }
@@ -121,7 +153,7 @@ export function diffSurfaces(
   // with whichever footer link happened to move.
   changes.sort((x, y) => y.prominence - x.prominence);
 
-  const counts = { added: 0, removed: 0, renamed: 0, changed: 0, unchanged };
+  const counts = { added: 0, removed: 0, renamed: 0, changed: 0, state: 0, unchanged };
   for (const c of changes) counts[c.kind]++;
   return { warnings, counts, changes };
 }

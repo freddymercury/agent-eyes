@@ -200,6 +200,25 @@ export interface DomExposure {
  */
 export type IdentityStrategy = "testid" | "semantic" | "container" | "positional";
 
+/**
+ * A control's current state, when it has one.
+ *
+ * Kept out of `identityKey` on purpose: a control whose value changed is the
+ * same control. Folding state into identity would report every edit as one
+ * removal plus one addition, which is the opposite of what a diff is for.
+ *
+ * `value` is never populated for password inputs — those read `[redacted]`.
+ */
+export interface ActionState {
+  value?: string;
+  checked?: boolean;
+  selected?: string;
+  "aria-checked"?: string;
+  "aria-selected"?: string;
+  "aria-expanded"?: string;
+  "aria-pressed"?: string;
+}
+
 export interface Action {
   /** Hash of `identityKey`. Stability depends on `identityStrategy`. */
   id: string;
@@ -217,6 +236,8 @@ export interface Action {
   evidence: ActionEvidence;
   domExposure: DomExposure;
   enabled?: boolean;
+  /** Current state of the control, when it has one. Absent for stateless actions. */
+  state?: ActionState;
   /** 0-1, derived from the evidence combination: is this interactive? */
   confidence: number;
   /** The outermost landmark this action sits in, if the page declares one. */
