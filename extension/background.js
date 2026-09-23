@@ -230,11 +230,28 @@ function startElementPicker(mode) {
     return document.elementFromPoint(e.clientX, e.clientY);
   }
 
+  /**
+   * An iframe this picker is not inside.
+   *
+   * A frame is a separate document; its mouse events never reach us. With
+   * allFrames the picker runs inside every reachable frame and handles its own
+   * clicks, so seeing an IFRAME here means that frame could not be injected —
+   * cross-origin without host permission, or sandboxed without allow-scripts.
+   * Saying so beats freezing a highlight over it and swallowing the click.
+   */
+  function unreachableFrame(el) {
+    return !!el && el.tagName === "IFRAME";
+  }
+
   function onMove(e) {
     const el = deepTarget(e);
     if (!el || el === currentEl || el === overlay || el === label) return;
     currentEl = el;
     const r = el.getBoundingClientRect();
+    const blocked = unreachableFrame(el);
+    overlay.style.borderColor = blocked ? "#E5484D" : "#4FD8C4";
+    overlay.style.background = blocked ? "rgba(229,72,77,0.12)" : "rgba(79,216,196,0.15)";
+    label.style.color = blocked ? "#E5484D" : "#4FD8C4";
     overlay.style.display = "block";
     overlay.style.left = r.left + "px";
     overlay.style.top = r.top + "px";
@@ -243,10 +260,11 @@ function startElementPicker(mode) {
     label.style.display = "block";
     label.style.left = r.left + "px";
     label.style.top = Math.max(0, r.top - 20) + "px";
-    label.textContent = describeEl(el);
+    label.textContent = blocked ? "iframe \u2014 AgentEyes cannot see inside this frame" : describeEl(el);
   }
 
   function cleanup() {
+    window.__agenteyesPickerCancel = null;
     document.removeEventListener("mousemove", onMove, true);
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("keydown", onKey, true);
@@ -308,7 +326,13 @@ function startElementPicker(mode) {
       const text = shadow.texts.length ? [base, ...shadow.texts].filter(Boolean).join("\n") : base;
 
       const warnings = [];
-      if (!text) {
+      if (unreachableFrame(currentEl)) {
+        warnings.push(
+          "this is an <iframe> AgentEyes could not inject into \u2014 cross-origin without " +
+            "host permission, or sandboxed without allow-scripts. Its content is NOT in this " +
+            "capture. src: " + (currentEl.getAttribute("src") || "(none)")
+        );
+      } else if (!text) {
         warnings.push(
           currentEl.shadowRoot
             ? "this element hosts a shadow root whose content could not be read"
@@ -321,6 +345,10 @@ function startElementPicker(mode) {
         data: {
           title: document.title,
           url: location.href,
+          // With allFrames the picker also runs in subframes, so `url` may be a
+          // frame's rather than the page's. Record both, or a capture from an
+          // embedded widget reads as one from its host.
+          inFrame: window !== window.top,
           elementPicked: true,
           tag: currentEl.tagName.toLowerCase(),
           attrs,
@@ -335,8 +363,19 @@ function startElementPicker(mode) {
   }
 
   function onKey(e) {
-    if (e.key === "Escape") cleanup();
+    if (e.key !== "Escape") return;
+    cleanup();
+    // Escape is delivered only to the focused frame; ask the worker to tear
+    // down the pickers running in the others.
+    try {
+      chrome.runtime.sendMessage({ type: "agenteyes-picker-cancel" });
+    } catch {
+      // Extension reloaded under this content script. The local cleanup above
+      // is the part the user can see either way.
+    }
   }
+
+  window.__agenteyesPickerCancel = cleanup;
 
   document.addEventListener("mousemove", onMove, true);
   document.addEventListener("click", onClick, true);
@@ -1468,10 +1507,53 @@ async function activatePicker(tabId) {
     return;
   }
 
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: startElementPicker
-  });
+  await injectPickerAllFrames(tab.id, undefined);
+}
+
+/**
+ * Inject the picker into every frame we are permitted to reach.
+ *
+ * An iframe is a separate document whose mouse events never reach the parent,
+ * so a top-frame-only picker is simply absent where the user is pointing: the
+ * highlight freezes on the <iframe> box and the click is consumed by the frame.
+ *
+ * activeTab grants the main frame origin only, so cross-origin frames still do
+ * not get a picker. Those are reported by the top-frame picker rather than
+ * silently eating the click.
+ */
+async function injectPickerAllFrames(tabId, mode) {
+  const args = mode === undefined ? [] : [mode];
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: startElementPicker,
+      args
+    });
+    return { frames: results.length };
+  } catch (err) {
+    console.warn("AgentEyes: all-frames injection failed, falling back to top frame", err);
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, func: startElementPicker, args });
+    return { frames: 1, degraded: true };
+  } catch {
+    flashBadge("!", "#E5484D");
+    return { frames: 0 };
+  }
+}
+
+/** Escape reaches only the focused frame, so tear down the others explicitly. */
+async function cancelPickerAllFrames(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        if (window.__agenteyesPickerCancel) window.__agenteyesPickerCancel();
+      }
+    });
+  } catch {
+    // Frames we cannot reach never got a picker, so there is nothing to cancel.
+  }
 }
 
 const WATCH_INTERVAL_MS = 5000;
@@ -1687,11 +1769,7 @@ async function addWatchTarget(tabId) {
   const tab = await resolveTab(tabId);
   if (!tab) return { ok: false };
   await ensureKit(tab.id);
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: startElementPicker,
-    args: ["watch"]
-  });
+  await injectPickerAllFrames(tab.id, "watch");
   return { ok: true };
 }
 
@@ -1771,6 +1849,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     postToBridge(payload).then((r) => sendResponse(r));
     return true;
+  }
+
+  if (message?.type === "agenteyes-picker-cancel") {
+    if (sender.tab?.id) cancelPickerAllFrames(sender.tab.id);
+    return;
   }
 
   if (message?.type === "agenteyes-element-picked") {
